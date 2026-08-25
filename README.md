@@ -1,6 +1,6 @@
 # Production RAG Knowledge Assistant
 
-Milestone 4 adds secure PDF/DOCX upload, persistent local document storage, Redis queueing, and an idempotent Celery verification worker. Parsing, retrieval, authentication, OpenAI calls, and a frontend remain deferred.
+Milestone 5 adds deterministic PDF/DOCX parsing, normalized source units, exact chunk offsets, and structure-aware chunking to the asynchronous ingestion worker. Retrieval, authentication, OpenAI calls, and a frontend remain deferred.
 
 ## Prerequisites
 
@@ -75,6 +75,9 @@ The [Milestone 4 ingestion guide](docs/INGESTION.md) explains upload validation,
 storage, trusted development identity, job states, retries, idempotency, and operational
 commands. Example requests are available through Swagger after configuring a development
 identity and seed records; never send tenant identity in upload input.
+
+The [Milestone 5 parsing guide](docs/PARSING.md) documents parser limits, cleaning and
+chunking rules, fingerprints, exact source traceability, and unsupported document features.
 
 ## Troubleshooting
 

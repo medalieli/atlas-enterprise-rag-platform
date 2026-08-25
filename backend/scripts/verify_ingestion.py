@@ -1,9 +1,15 @@
-"""Development-only real HTTP ingestion smoke test; prints no file bytes or full IDs."""
+"""Development-only PDF/DOCX HTTP smoke test; prints no document text or IDs."""
 
 import json
 import os
+import sys
 import time
 import urllib.request
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from tests.fixture_builders import docx_bytes, pdf_bytes
 
 
 def request(
@@ -20,41 +26,50 @@ def request(
         return json.loads(response.read())
 
 
+def upload_and_wait(filename: str, mime: str, content: bytes) -> dict[str, object]:
+    boundary = f"safe-{filename.replace('.', '-')}-boundary"
+    body = (
+        (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+            f"Content-Type: {mime}\r\n\r\n"
+        ).encode()
+        + content
+        + f"\r\n--{boundary}--\r\n".encode()
+    )
+    created = request(
+        f"{base_url}/collections/{collection_id}/documents",
+        "POST",
+        body,
+        f"multipart/form-data; boundary={boundary}",
+    )
+    terminal: dict[str, object] = {}
+    for _ in range(45):
+        terminal = request(f"{base_url}/processing-jobs/{created['job_id']}")
+        if terminal["status"] in {"succeeded", "failed"}:
+            break
+        time.sleep(1)
+    if terminal.get("status") != "succeeded":
+        raise RuntimeError(f"Unexpected {filename} status: {terminal.get('status')}")
+    return {
+        "type": filename.rsplit(".", 1)[-1],
+        "status": terminal["status"],
+        "attempts": terminal["attempt_count"],
+    }
+
+
 base_url = os.environ.get("E2E_API_URL", "http://localhost:8000")
 collection_id = os.environ["E2E_COLLECTION_ID"]
-boundary = "safe-e2e-boundary"
-pdf = b"%PDF-1.7\n% Milestone 4 smoke test\n"
-body = (
-    (
-        f"--{boundary}\r\n"
-        'Content-Disposition: form-data; name="file"; filename="../safe.pdf"\r\n'
-        "Content-Type: application/pdf\r\n\r\n"
-    ).encode()
-    + pdf
-    + f"\r\n--{boundary}--\r\n".encode()
-)
-created = request(
-    f"{base_url}/collections/{collection_id}/documents",
-    "POST",
-    body,
-    f"multipart/form-data; boundary={boundary}",
-)
-job_id = created["job_id"]
-terminal: dict[str, object] = {}
-for _ in range(30):
-    terminal = request(f"{base_url}/processing-jobs/{job_id}")
-    if terminal["status"] in {"succeeded", "failed"}:
-        break
-    time.sleep(1)
-if terminal.get("status") != "succeeded":
-    raise RuntimeError(f"Unexpected terminal status: {terminal.get('status')}")
-print(
-    json.dumps(
-        {
-            "upload_status": created["processing_status"],
-            "terminal_status": terminal["status"],
-            "attempt_count": terminal["attempt_count"],
-            "filename": created["original_filename"],
-        }
-    )
-)
+results = [
+    upload_and_wait(
+        "traceable.pdf",
+        "application/pdf",
+        pdf_bytes(["First page trace.", "Second page trace."]),
+    ),
+    upload_and_wait(
+        "traceable.docx",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        docx_bytes(),
+    ),
+]
+print(json.dumps(results))

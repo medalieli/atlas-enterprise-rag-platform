@@ -1,53 +1,116 @@
-"""Narrow Docker smoke check for storage integrity and duplicate delivery."""
+"""Docker smoke check for chunk traceability and duplicate delivery."""
 
 import asyncio
 from uuid import UUID
 
 from sqlalchemy import select
 
-from app.core.config import get_settings
-from app.db.models import Document, ProcessingJob, ProcessingJobStatus
+from app.db.models import (
+    Document,
+    DocumentChunk,
+    DocumentSourceUnit,
+    ProcessingJob,
+    ProcessingJobStatus,
+)
 from app.db.session import session_factory
-from app.storage import LocalDocumentStorage
 from app.tasks import verify_original_task
 
 SMOKE_COLLECTION_ID = UUID("33333333-3333-4333-8333-333333333333")
 
 
+async def signatures(document_id: UUID) -> tuple[tuple[object, ...], ...]:
+    async with session_factory() as session:
+        rows = (
+            await session.scalars(
+                select(DocumentChunk)
+                .where(DocumentChunk.document_id == document_id)
+                .order_by(DocumentChunk.chunk_index)
+            )
+        ).all()
+        for chunk in rows:
+            unit = await session.get(DocumentSourceUnit, chunk.source_unit_id)
+            if (
+                unit is None
+                or unit.normalized_text[chunk.start_offset : chunk.end_offset]
+                != chunk.content
+            ):
+                raise RuntimeError("Chunk offsets do not resolve")
+        return tuple(
+            (
+                row.chunk_index,
+                row.content_hash,
+                row.pipeline_fingerprint,
+                row.page_number,
+                row.section,
+                row.start_offset,
+                row.end_offset,
+            )
+            for row in rows
+        )
+
+
 async def verify() -> None:
     async with session_factory() as session:
-        document = await session.scalar(
-            select(Document)
-            .where(Document.collection_id == SMOKE_COLLECTION_ID)
-            .order_by(Document.created_at.desc())
-            .limit(1)
-        )
-        if document is None:
-            raise RuntimeError("Smoke document not found")
-        job = await session.scalar(
+        documents = (
+            await session.scalars(
+                select(Document)
+                .where(
+                    Document.collection_id == SMOKE_COLLECTION_ID,
+                    Document.filename.in_(["traceable.pdf", "traceable.docx"]),
+                )
+                .order_by(Document.created_at.desc())
+                .limit(2)
+            )
+        ).all()
+        if len(documents) != 2:
+            raise RuntimeError("Expected PDF and DOCX smoke documents")
+        evidence: list[tuple[str, int]] = []
+        for document in documents:
+            job = await session.scalar(
+                select(ProcessingJob).where(ProcessingJob.document_id == document.id)
+            )
+            if job is None or job.status != ProcessingJobStatus.SUCCEEDED:
+                raise RuntimeError("Smoke job did not succeed")
+            signature = await signatures(document.id)
+            if not signature:
+                raise RuntimeError("Smoke document has no chunks")
+            evidence.append((document.content_type, len(signature)))
+        repeated_document = documents[0]
+        repeated_job = await session.scalar(
             select(ProcessingJob).where(
-                ProcessingJob.document_id == document.id,
-                ProcessingJob.tenant_id == document.tenant_id,
+                ProcessingJob.document_id == repeated_document.id
             )
         )
-        if job is None or job.status != ProcessingJobStatus.SUCCEEDED:
-            raise RuntimeError("Smoke job did not succeed")
-        attempts = job.attempt_count
-        storage = LocalDocumentStorage(get_settings().document_storage_path)
-        if not await storage.verify(document.storage_key, document.checksum_sha256):
-            raise RuntimeError("Stored checksum verification failed")
+        assert repeated_job is not None
+        attempts = repeated_job.attempt_count
+        before = await signatures(repeated_document.id)
         verify_original_task.apply_async(
-            args=[str(document.tenant_id), str(document.id), str(job.id)]
+            args=[
+                str(repeated_document.tenant_id),
+                str(repeated_document.id),
+                str(repeated_job.id),
+            ]
         )
 
     await asyncio.sleep(3)
+    after = await signatures(repeated_document.id)
     async with session_factory() as session:
-        repeated = await session.get(ProcessingJob, job.id)
-        if repeated is None or repeated.status != ProcessingJobStatus.SUCCEEDED:
-            raise RuntimeError("Duplicate delivery changed terminal state")
-        if repeated.attempt_count != attempts:
-            raise RuntimeError("Duplicate delivery repeated completed work")
-    print("storage-checksum=verified duplicate-delivery=idempotent")
+        repeated_job = await session.get(ProcessingJob, repeated_job.id)
+        if (
+            repeated_job is None
+            or repeated_job.attempt_count != attempts
+            or before != after
+        ):
+            raise RuntimeError("Duplicate delivery changed deterministic output")
+    summary = {
+        "pdf_chunks": next(
+            count for mime, count in evidence if mime == "application/pdf"
+        ),
+        "docx_chunks": next(
+            count for mime, count in evidence if mime != "application/pdf"
+        ),
+    }
+    print(f"traceability=verified determinism=verified counts={summary}")
 
 
 if __name__ == "__main__":

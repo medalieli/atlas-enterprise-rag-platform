@@ -1,6 +1,6 @@
 # Project Roadmap
 
-Statuses: **Milestones 1–4 — completed.** Milestones 5–15 — pending.
+Statuses: **Milestones 1–5 — completed.** Milestones 6–15 — pending.
 
 ## 1. Repository foundation — Completed
 
@@ -26,7 +26,7 @@ Statuses: **Milestones 1–4 — completed.** Milestones 5–15 — pending.
 
 **Acceptance criteria:** Authorized uploads use the storage abstraction; type and size validation exists; Celery/Redis processing is idempotent and retryable; job states and failures are testable.
 
-## 5. Parsing, cleaning and structure-aware chunking — Pending
+## 5. Parsing, cleaning and structure-aware chunking — Completed
 
 **Goal:** Extract useful content while retaining source structure and traceability.
 

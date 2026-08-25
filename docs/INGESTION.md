@@ -34,10 +34,12 @@ Redis is a private Compose-only broker. Messages contain tenant, document, and j
 never bytes or paths. PostgreSQL is authoritative for `queued`, `running`, `retrying`,
 `succeeded`, and `failed`. `GET /processing-jobs/{job_id}` is tenant-scoped.
 
-The late-acknowledged task locks its job row, treats succeeded and currently running jobs
-as no-ops, verifies the stored file and checksum, and marks it succeeded. Missing or
-changed files fail permanently. Storage I/O errors retry at most three times with bounded
-exponential delay; Celery adds broker retry jitter. Attempts and timestamps are persisted.
+The late-acknowledged task uses a PostgreSQL advisory lock to exclude concurrent duplicate
+work, verifies the stored file and checksum, and runs the deterministic Milestone 5 parser,
+cleaner, and chunker. Source units, chunks, and final success are published atomically.
+Missing, changed, or permanently malformed files fail safely. Storage/database errors retry
+at most three times with bounded exponential delay and jitter. Attempts and timestamps are
+persisted. Completed duplicate deliveries remain no-ops.
 
 There is no distributed transaction spanning PostgreSQL, storage, and Redis. If database
 creation fails, storage is removed. If publishing fails, the just-created rows and file are

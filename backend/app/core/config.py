@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import SecretStr, field_validator
+from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -29,6 +29,14 @@ class Settings(BaseSettings):
     max_upload_bytes: int = 20 * 1024 * 1024
     max_docx_uncompressed_bytes: int = 100 * 1024 * 1024
     celery_max_retries: int = 3
+    parser_max_pdf_pages: int = 500
+    parser_max_extracted_chars: int = 5_000_000
+    parser_max_pdf_stream_bytes: int = 50 * 1024 * 1024
+    parser_soft_time_limit_seconds: int = 120
+    parser_hard_time_limit_seconds: int = 150
+    chunk_target_chars: int = 1200
+    chunk_max_chars: int = 1800
+    chunk_overlap_chars: int = 150
     development_tenant_id: str | None = None
     development_user_id: str | None = None
 
@@ -37,6 +45,27 @@ class Settings(BaseSettings):
     def normalize_optional_secret(cls, value: object) -> object:
         """Treat an empty optional secret supplied by Compose as unset."""
         return None if value == "" else value
+
+    @model_validator(mode="after")
+    def validate_parsing_limits(self) -> "Settings":
+        positive = (
+            self.parser_max_pdf_pages,
+            self.parser_max_extracted_chars,
+            self.parser_max_pdf_stream_bytes,
+            self.parser_soft_time_limit_seconds,
+            self.parser_hard_time_limit_seconds,
+            self.chunk_target_chars,
+            self.chunk_max_chars,
+        )
+        if any(value <= 0 for value in positive):
+            raise ValueError("Parsing and chunking limits must be positive")
+        if self.parser_hard_time_limit_seconds <= self.parser_soft_time_limit_seconds:
+            raise ValueError("Parser hard time limit must exceed its soft time limit")
+        if self.chunk_target_chars > self.chunk_max_chars:
+            raise ValueError("Chunk target cannot exceed chunk maximum")
+        if not 0 <= self.chunk_overlap_chars < self.chunk_target_chars:
+            raise ValueError("Chunk overlap must be smaller than chunk target")
+        return self
 
 
 @lru_cache

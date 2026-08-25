@@ -7,6 +7,7 @@ EXPECTED_TABLES = {
     "collections",
     "conversations",
     "document_chunks",
+    "document_source_units",
     "documents",
     "memberships",
     "organizations",
@@ -15,7 +16,7 @@ EXPECTED_TABLES = {
 }
 
 
-def test_metadata_contains_only_milestone_3_tables() -> None:
+def test_metadata_contains_expected_tables() -> None:
     assert set(Base.metadata.tables) == EXPECTED_TABLES
 
 
@@ -29,6 +30,8 @@ def test_tenant_child_links_use_composite_foreign_keys() -> None:
     expected_constraints = {
         ("documents", "fk_documents_tenant_collection"),
         ("document_chunks", "fk_document_chunks_tenant_document"),
+        ("document_chunks", "fk_document_chunks_tenant_source_unit"),
+        ("document_source_units", "fk_source_units_tenant_document"),
         ("processing_jobs", "fk_processing_jobs_tenant_document"),
         ("conversations", "fk_conversations_tenant_collection"),
         ("conversations", "fk_conversations_tenant_membership"),
@@ -39,7 +42,7 @@ def test_tenant_child_links_use_composite_foreign_keys() -> None:
         for table in Base.metadata.tables.values()
         for constraint in table.constraints
         if isinstance(constraint, ForeignKeyConstraint)
-        and len(constraint.column_keys) == 2
+        and len(constraint.column_keys) >= 2
     }
 
     assert expected_constraints <= actual_constraints

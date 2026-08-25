@@ -164,6 +164,16 @@ class DocumentChunk(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             name="fk_document_chunks_tenant_document",
             ondelete="CASCADE",
         ),
+        ForeignKeyConstraint(
+            ["tenant_id", "document_id", "source_unit_id"],
+            [
+                "document_source_units.tenant_id",
+                "document_source_units.document_id",
+                "document_source_units.id",
+            ],
+            name="fk_document_chunks_tenant_source_unit",
+            ondelete="CASCADE",
+        ),
         UniqueConstraint(
             "tenant_id",
             "document_id",
@@ -197,17 +207,58 @@ class DocumentChunk(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     document_id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True), nullable=False
     )
+    source_unit_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=False
+    )
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    pipeline_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     page_number: Mapped[int | None] = mapped_column(Integer)
     section: Mapped[str | None] = mapped_column(String(500))
-    start_offset: Mapped[int | None] = mapped_column(Integer)
-    end_offset: Mapped[int | None] = mapped_column(Integer)
+    start_offset: Mapped[int] = mapped_column(Integer, nullable=False)
+    end_offset: Mapped[int] = mapped_column(Integer, nullable=False)
     source_metadata: Mapped[dict[str, object]] = mapped_column(
         JSONB,
         nullable=False,
         default=dict,
         server_default=text("'{}'::jsonb"),
+    )
+
+
+class DocumentSourceUnit(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "document_source_units"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "document_id"],
+            ["documents.tenant_id", "documents.id"],
+            name="fk_source_units_tenant_document",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "tenant_id", "document_id", "id", name="uq_source_units_tenant_document_id"
+        ),
+        UniqueConstraint(
+            "tenant_id", "document_id", "unit_index", name="uq_source_units_index"
+        ),
+        CheckConstraint("unit_index >= 0", name="ck_source_units_index_nonnegative"),
+        Index("ix_source_units_tenant_document", "tenant_id", "document_id"),
+    )
+
+    tenant_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=False
+    )
+    document_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=False
+    )
+    unit_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    page_number: Mapped[int | None] = mapped_column(Integer)
+    section_path: Mapped[str | None] = mapped_column(String(1000))
+    normalized_text: Mapped[str] = mapped_column(Text, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_metadata: Mapped[dict[str, object]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
     )
 
 
@@ -289,6 +340,7 @@ __all__ = [
     "Document",
     "DocumentChunk",
     "DocumentStatus",
+    "DocumentSourceUnit",
     "Membership",
     "MembershipRole",
     "Organization",

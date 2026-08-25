@@ -10,6 +10,7 @@ from app.db.models import (
     Conversation,
     Document,
     DocumentChunk,
+    DocumentSourceUnit,
     Membership,
     Organization,
     User,
@@ -25,7 +26,7 @@ pytestmark = [
     ),
 ]
 
-REVISION = "8b1f2d4e6a70"
+REVISION = "c5d9e2f1a804"
 
 
 async def test_database_is_at_expected_alembic_revision() -> None:
@@ -44,6 +45,7 @@ async def test_tenant_and_uniqueness_constraints_are_enforced() -> None:
     collection_a_id = uuid4()
     collection_b_id = uuid4()
     document_a_id = uuid4()
+    source_unit_id = uuid4()
 
     async with engine.connect() as connection:
         transaction = await connection.begin()
@@ -85,12 +87,29 @@ async def test_tenant_and_uniqueness_constraints_are_enforced() -> None:
                 )
             )
             await connection.execute(
+                insert(DocumentSourceUnit).values(
+                    id=source_unit_id,
+                    tenant_id=tenant_a_id,
+                    document_id=document_a_id,
+                    unit_index=0,
+                    source_type="pdf",
+                    page_number=1,
+                    normalized_text="First chunk",
+                    content_hash="0" * 64,
+                )
+            )
+            await connection.execute(
                 insert(DocumentChunk).values(
                     tenant_id=tenant_a_id,
                     document_id=document_a_id,
+                    source_unit_id=source_unit_id,
                     chunk_index=0,
                     content="First chunk",
+                    content_hash="0" * 64,
+                    pipeline_fingerprint="0" * 64,
                     page_number=1,
+                    start_offset=0,
+                    end_offset=11,
                 )
             )
 
@@ -122,8 +141,13 @@ async def test_tenant_and_uniqueness_constraints_are_enforced() -> None:
                         insert(DocumentChunk).values(
                             tenant_id=tenant_a_id,
                             document_id=document_a_id,
+                            source_unit_id=source_unit_id,
                             chunk_index=0,
                             content="Duplicate position",
+                            content_hash="0" * 64,
+                            pipeline_fingerprint="0" * 64,
+                            start_offset=0,
+                            end_offset=18,
                         )
                     )
 

@@ -10,11 +10,14 @@ from app import tasks
 from app.db.models import (
     Collection,
     Document,
+    DocumentChunk,
+    DocumentSourceUnit,
     Organization,
     ProcessingJob,
     ProcessingJobStatus,
 )
 from app.db.session import session_factory
+from tests.fixture_builders import pdf_bytes
 
 pytestmark = [
     pytest.mark.asyncio,
@@ -26,9 +29,11 @@ pytestmark = [
 ]
 
 
-async def make_job(storage_root: str, *, create_file: bool) -> tuple[object, ...]:
+async def make_job(
+    storage_root: str, *, create_file: bool, content: bytes | None = None
+) -> tuple[object, ...]:
     tenant_id, collection_id, document_id, job_id = (uuid4() for _ in range(4))
-    content = b"%PDF-1.7\nintegration"
+    content = content or pdf_bytes(["Integration document with traceable text."])
     checksum = hashlib.sha256(content).hexdigest()
     key = f"{tenant_id.hex}/{document_id.hex}/original.pdf"
     if create_file:
@@ -69,13 +74,24 @@ async def cleanup(tenant_id: object) -> None:
         await session.execute(delete(Organization).where(Organization.id == tenant_id))
 
 
+def settings(root: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        document_storage_path=root,
+        parser_max_pdf_pages=10,
+        parser_max_extracted_chars=10_000,
+        parser_max_pdf_stream_bytes=100_000,
+        parser_soft_time_limit_seconds=10,
+        chunk_target_chars=100,
+        chunk_max_chars=150,
+        chunk_overlap_chars=10,
+    )
+
+
 async def test_success_and_duplicate_delivery_are_idempotent(
     tmp_path: object, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = str(tmp_path)
-    monkeypatch.setattr(
-        tasks, "get_settings", lambda: SimpleNamespace(document_storage_path=root)
-    )
+    monkeypatch.setattr(tasks, "get_settings", lambda: settings(root))
     tenant_id, document_id, job_id = await make_job(root, create_file=True)
     try:
         assert await tasks.process_job(tenant_id, document_id, job_id) == "succeeded"
@@ -90,6 +106,26 @@ async def test_success_and_duplicate_delivery_are_idempotent(
             assert job.attempt_count == 1
             assert job.started_at is not None
             assert job.finished_at is not None
+            units = (
+                await session.scalars(
+                    select(DocumentSourceUnit).where(
+                        DocumentSourceUnit.document_id == document_id
+                    )
+                )
+            ).all()
+            chunks = (
+                await session.scalars(
+                    select(DocumentChunk).where(
+                        DocumentChunk.document_id == document_id
+                    )
+                )
+            ).all()
+            assert len(units) == 1
+            assert len(chunks) == 1
+            assert (
+                units[0].normalized_text[chunks[0].start_offset : chunks[0].end_offset]
+                == chunks[0].content
+            )
     finally:
         await cleanup(tenant_id)
 
@@ -98,9 +134,7 @@ async def test_missing_file_is_a_permanent_failure(
     tmp_path: object, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = str(tmp_path)
-    monkeypatch.setattr(
-        tasks, "get_settings", lambda: SimpleNamespace(document_storage_path=root)
-    )
+    monkeypatch.setattr(tasks, "get_settings", lambda: settings(root))
     tenant_id, document_id, job_id = await make_job(root, create_file=False)
     try:
         assert await tasks.process_job(tenant_id, document_id, job_id) == "failed"
@@ -119,9 +153,7 @@ async def test_transient_storage_failure_moves_job_to_retrying(
     tmp_path: object, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = str(tmp_path)
-    monkeypatch.setattr(
-        tasks, "get_settings", lambda: SimpleNamespace(document_storage_path=root)
-    )
+    monkeypatch.setattr(tasks, "get_settings", lambda: settings(root))
     tenant_id, document_id, job_id = await make_job(root, create_file=True)
 
     async def unavailable(*_: object) -> bool:
@@ -136,5 +168,24 @@ async def test_transient_storage_failure_moves_job_to_retrying(
             assert job is not None
             assert job.status == ProcessingJobStatus.RETRYING
             assert job.error_message == tasks.SAFE_TRANSIENT
+    finally:
+        await cleanup(tenant_id)
+
+
+async def test_permanent_parser_failure_is_safe_and_observable(
+    tmp_path: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = str(tmp_path)
+    monkeypatch.setattr(tasks, "get_settings", lambda: settings(root))
+    tenant_id, document_id, job_id = await make_job(
+        root, create_file=True, content=b"%PDF-1.7\nmalformed"
+    )
+    try:
+        assert await tasks.process_job(tenant_id, document_id, job_id) == "failed"
+        async with session_factory() as session:
+            job = await session.get(ProcessingJob, job_id)
+            assert job is not None
+            assert job.status == ProcessingJobStatus.FAILED
+            assert job.error_message == tasks.SAFE_PARSE
     finally:
         await cleanup(tenant_id)

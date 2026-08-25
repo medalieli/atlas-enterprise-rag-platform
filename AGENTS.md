@@ -26,6 +26,7 @@
 - Validate services: `docker compose config`
 - Inspect the worker: `docker compose exec worker uv run --no-sync celery -A app.worker:celery_app inspect ping`
 - Run a worker locally: `cd backend; uv run celery -A app.worker:celery_app worker --loglevel=INFO`
+- Run parser/chunker tests: `cd backend; uv run pytest tests/test_parsing.py tests/test_cleaning_chunking.py`
 
 ## Database migration commands
 
