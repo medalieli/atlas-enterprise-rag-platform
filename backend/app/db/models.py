@@ -2,6 +2,7 @@ from datetime import datetime
 from enum import StrEnum
 from uuid import UUID
 
+from pgvector.sqlalchemy import VECTOR
 from sqlalchemy import (
     CheckConstraint,
     DateTime,
@@ -195,9 +196,31 @@ class DocumentChunk(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "end_offset IS NULL OR end_offset >= start_offset",
             name="ck_document_chunks_offset_order",
         ),
+        CheckConstraint(
+            "(embedding IS NULL AND embedding_model IS NULL AND "
+            "embedding_dimensions IS NULL AND embedding_input_version IS NULL AND "
+            "embedding_fingerprint IS NULL AND embedded_at IS NULL) OR "
+            "(embedding IS NOT NULL AND embedding_model IS NOT NULL AND "
+            "embedding_dimensions = 1536 AND embedding_input_version IS NOT NULL AND "
+            "embedding_fingerprint IS NOT NULL AND embedded_at IS NOT NULL)",
+            name="ck_document_chunks_embedding_complete",
+        ),
         Index("ix_document_chunks_tenant_document", "tenant_id", "document_id"),
         Index(
             "ix_document_chunks_tenant_page", "tenant_id", "document_id", "page_number"
+        ),
+        Index(
+            "ix_document_chunks_tenant_embedding",
+            "tenant_id",
+            "document_id",
+            postgresql_where=text("embedding IS NOT NULL"),
+        ),
+        Index(
+            "ix_document_chunks_embedding_hnsw_cosine",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+            postgresql_where=text("embedding IS NOT NULL"),
         ),
     )
 
@@ -224,6 +247,12 @@ class DocumentChunk(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         default=dict,
         server_default=text("'{}'::jsonb"),
     )
+    embedding: Mapped[list[float] | None] = mapped_column(VECTOR(1536))
+    embedding_model: Mapped[str | None] = mapped_column(String(200))
+    embedding_dimensions: Mapped[int | None] = mapped_column(Integer)
+    embedding_input_version: Mapped[str | None] = mapped_column(String(50))
+    embedding_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    embedded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class DocumentSourceUnit(UUIDPrimaryKeyMixin, TimestampMixin, Base):

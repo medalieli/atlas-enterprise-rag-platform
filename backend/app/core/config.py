@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import SecretStr, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -24,6 +24,14 @@ class Settings(BaseSettings):
     postgres_user: str = "rag_assistant_dev"
     postgres_password: SecretStr = SecretStr("rag_assistant_dev")
     openai_api_key: SecretStr | None = None
+    embedding_provider: str = "openai"
+    embedding_model: str = "text-embedding-3-small"
+    embedding_dimensions: int = 1536
+    embedding_batch_size: int = Field(default=64, ge=1, le=2048)
+    embedding_request_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
+    embedding_provider_max_retries: int = Field(default=0, ge=0, le=2)
+    embedding_max_input_tokens: int = Field(default=8191, ge=1, le=8192)
+    embedding_max_batch_tokens: int = Field(default=300_000, ge=1, le=300_000)
     redis_url: str = "redis://localhost:6379/0"
     document_storage_path: str = "./data/documents"
     max_upload_bytes: int = 20 * 1024 * 1024
@@ -65,6 +73,10 @@ class Settings(BaseSettings):
             raise ValueError("Chunk target cannot exceed chunk maximum")
         if not 0 <= self.chunk_overlap_chars < self.chunk_target_chars:
             raise ValueError("Chunk overlap must be smaller than chunk target")
+        if self.embedding_provider != "openai":
+            raise ValueError("Production embedding provider must be 'openai'")
+        if self.embedding_dimensions != 1536:
+            raise ValueError("Database schema requires 1536 embedding dimensions")
         return self
 
 

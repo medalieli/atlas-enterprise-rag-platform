@@ -1,6 +1,6 @@
 # Project Roadmap
 
-Statuses: **Milestones 1–5 — completed.** Milestones 6–15 — pending.
+Statuses: **Milestones 1–6 — completed.** Milestones 7–15 — pending.
 
 ## 1. Repository foundation — Completed
 
@@ -32,7 +32,7 @@ Statuses: **Milestones 1–5 — completed.** Milestones 6–15 — pending.
 
 **Acceptance criteria:** PDF pages and DOCX sections are preserved where available; cleaning and chunking are deterministic; every chunk maps to a document version and source location; representative parser tests pass.
 
-## 6. Embeddings and vector retrieval — Pending
+## 6. Embeddings and vector retrieval — Completed
 
 **Goal:** Generate configurable embeddings and retrieve semantically related authorized chunks with pgvector.
 

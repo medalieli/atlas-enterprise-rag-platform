@@ -1,6 +1,8 @@
 # Production RAG Knowledge Assistant
 
-Milestone 5 adds deterministic PDF/DOCX parsing, normalized source units, exact chunk offsets, and structure-aware chunking to the asynchronous ingestion worker. Retrieval, authentication, OpenAI calls, and a frontend remain deferred.
+Milestone 6 adds validated OpenAI embeddings, atomic vector publication, and authorized
+semantic pgvector retrieval. Full-text/hybrid search, reranking, answers, authentication,
+conversation memory, and a frontend remain deferred.
 
 ## Prerequisites
 
@@ -38,6 +40,7 @@ Warning: `docker compose down -v` permanently deletes the local PostgreSQL volum
 - Swagger UI: <http://localhost:8000/docs>
 - Upload: `POST /collections/{collection_id}/documents`
 - Job status: `GET /processing-jobs/{job_id}`
+- Semantic retrieval: `POST /collections/{collection_id}/semantic-search`
 
 If `API_PORT` is changed, replace `8000` in these URLs with that port.
 
@@ -78,6 +81,10 @@ identity and seed records; never send tenant identity in upload input.
 
 The [Milestone 5 parsing guide](docs/PARSING.md) documents parser limits, cleaning and
 chunking rules, fingerprints, exact source traceability, and unsupported document features.
+
+The [Milestone 6 embedding guide](docs/EMBEDDINGS.md) documents provider configuration,
+batching, fingerprints, atomic ingestion, backfill, vector indexing, semantic search,
+cost/privacy considerations, and limitations.
 
 ## Troubleshooting
 

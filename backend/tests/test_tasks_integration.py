@@ -17,6 +17,7 @@ from app.db.models import (
     ProcessingJobStatus,
 )
 from app.db.session import session_factory
+from app.embeddings import PermanentEmbeddingError
 from tests.fixture_builders import pdf_bytes
 
 pytestmark = [
@@ -27,6 +28,22 @@ pytestmark = [
         reason="set RUN_DATABASE_TESTS=1 with the migrated Compose database",
     ),
 ]
+
+
+class FakeEmbeddingProvider:
+    calls = 0
+
+    async def embed_documents(self, texts: object) -> list[list[float]]:
+        self.calls += 1
+        return [[1.0] + [0.0] * 1535 for _ in texts]  # type: ignore[union-attr]
+
+    async def embed_query(self, text: str) -> list[float]:
+        return [1.0] + [0.0] * 1535
+
+
+class FailingEmbeddingProvider(FakeEmbeddingProvider):
+    async def embed_documents(self, texts: object) -> list[list[float]]:
+        raise PermanentEmbeddingError("synthetic permanent failure")
 
 
 async def make_job(
@@ -84,6 +101,8 @@ def settings(root: str) -> SimpleNamespace:
         chunk_target_chars=100,
         chunk_max_chars=150,
         chunk_overlap_chars=10,
+        embedding_model="text-embedding-3-small",
+        embedding_dimensions=1536,
     )
 
 
@@ -94,11 +113,16 @@ async def test_success_and_duplicate_delivery_are_idempotent(
     monkeypatch.setattr(tasks, "get_settings", lambda: settings(root))
     tenant_id, document_id, job_id = await make_job(root, create_file=True)
     try:
-        assert await tasks.process_job(tenant_id, document_id, job_id) == "succeeded"
+        provider = FakeEmbeddingProvider()
         assert (
-            await tasks.process_job(tenant_id, document_id, job_id)
+            await tasks.process_job(tenant_id, document_id, job_id, provider)
+            == "succeeded"
+        )
+        assert (
+            await tasks.process_job(tenant_id, document_id, job_id, provider)
             == "already-complete"
         )
+        assert provider.calls == 1
         async with session_factory() as session:
             job = await session.get(ProcessingJob, job_id)
             assert job is not None
@@ -137,7 +161,12 @@ async def test_missing_file_is_a_permanent_failure(
     monkeypatch.setattr(tasks, "get_settings", lambda: settings(root))
     tenant_id, document_id, job_id = await make_job(root, create_file=False)
     try:
-        assert await tasks.process_job(tenant_id, document_id, job_id) == "failed"
+        assert (
+            await tasks.process_job(
+                tenant_id, document_id, job_id, FakeEmbeddingProvider()
+            )
+            == "failed"
+        )
         async with session_factory() as session:
             job = await session.scalar(
                 select(ProcessingJob).where(ProcessingJob.id == job_id)
@@ -162,7 +191,9 @@ async def test_transient_storage_failure_moves_job_to_retrying(
     monkeypatch.setattr(tasks.LocalDocumentStorage, "verify", unavailable)
     try:
         with pytest.raises(tasks.TransientIngestionError):
-            await tasks.process_job(tenant_id, document_id, job_id)
+            await tasks.process_job(
+                tenant_id, document_id, job_id, FakeEmbeddingProvider()
+            )
         async with session_factory() as session:
             job = await session.get(ProcessingJob, job_id)
             assert job is not None
@@ -181,11 +212,43 @@ async def test_permanent_parser_failure_is_safe_and_observable(
         root, create_file=True, content=b"%PDF-1.7\nmalformed"
     )
     try:
-        assert await tasks.process_job(tenant_id, document_id, job_id) == "failed"
+        assert (
+            await tasks.process_job(
+                tenant_id, document_id, job_id, FakeEmbeddingProvider()
+            )
+            == "failed"
+        )
         async with session_factory() as session:
             job = await session.get(ProcessingJob, job_id)
             assert job is not None
             assert job.status == ProcessingJobStatus.FAILED
             assert job.error_message == tasks.SAFE_PARSE
+    finally:
+        await cleanup(tenant_id)
+
+
+async def test_embedding_failure_publishes_no_partial_chunks(
+    tmp_path: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = str(tmp_path)
+    monkeypatch.setattr(tasks, "get_settings", lambda: settings(root))
+    tenant_id, document_id, job_id = await make_job(root, create_file=True)
+    try:
+        assert await tasks.process_job(
+            tenant_id, document_id, job_id, FailingEmbeddingProvider()
+        ) == "failed"
+        async with session_factory() as session:
+            chunks = (
+                await session.scalars(
+                    select(DocumentChunk).where(
+                        DocumentChunk.document_id == document_id
+                    )
+                )
+            ).all()
+            job = await session.get(ProcessingJob, job_id)
+            assert chunks == []
+            assert job is not None
+            assert job.status == ProcessingJobStatus.FAILED
+            assert job.error_message == tasks.SAFE_EMBEDDING
     finally:
         await cleanup(tenant_id)

@@ -18,6 +18,15 @@ from app.db.models import (
     ProcessingJobStatus,
 )
 from app.db.session import dispose_engine, engine, session_factory
+from app.embeddings import (
+    EMBEDDING_INPUT_VERSION,
+    EmbeddingProvider,
+    PermanentEmbeddingError,
+    TransientEmbeddingError,
+    build_embedding_input,
+    create_embedding_provider,
+    embedding_fingerprint,
+)
 from app.ingestion.chunking import (
     CHUNKER_VERSION,
     ChunkingConfig,
@@ -33,6 +42,7 @@ SAFE_MISSING = "Stored original is missing or failed integrity verification"
 SAFE_PARSE = "Document content could not be processed safely"
 SAFE_TRANSIENT = "Temporary ingestion failure; retry scheduled"
 SAFE_RETRY_EXHAUSTED = "Ingestion failed after retry limit"
+SAFE_EMBEDDING = "Document embeddings could not be generated safely"
 
 
 class TransientIngestionError(Exception):
@@ -100,7 +110,12 @@ def _chunk_config(settings: object) -> ChunkingConfig:
     )  # type: ignore[attr-defined]
 
 
-async def process_job(tenant_id: UUID, document_id: UUID, job_id: UUID) -> str:
+async def process_job(
+    tenant_id: UUID,
+    document_id: UUID,
+    job_id: UUID,
+    embedding_provider: EmbeddingProvider | None = None,
+) -> str:
     """Parse outside transactions and publish one deterministic chunk set atomically."""
     settings = get_settings()
     storage = LocalDocumentStorage(settings.document_storage_path)
@@ -167,6 +182,28 @@ async def process_job(tenant_id: UUID, document_id: UUID, job_id: UUID) -> str:
                 await _mark_retrying(tenant_id, document_id, job_id)
                 raise TransientIngestionError from exc
 
+            try:
+                provider = embedding_provider or create_embedding_provider(settings)
+                inputs = [
+                    build_embedding_input(
+                        candidate.content,
+                        " / ".join(
+                            cleaned[candidate.source_unit_index].location.section_path
+                        )
+                        or None,
+                    )
+                    for candidate in candidates
+                ]
+                vectors = await provider.embed_documents(inputs)
+                if len(vectors) != len(candidates):
+                    raise PermanentEmbeddingError("Embedding response count mismatch")
+            except TransientEmbeddingError as exc:
+                await _mark_retrying(tenant_id, document_id, job_id)
+                raise TransientIngestionError from exc
+            except PermanentEmbeddingError:
+                await _mark_failed(tenant_id, document_id, job_id, SAFE_EMBEDDING)
+                return "failed"
+
             async with session_factory() as session, session.begin():
                 job = await session.scalar(
                     select(ProcessingJob)
@@ -214,7 +251,10 @@ async def process_job(tenant_id: UUID, document_id: UUID, job_id: UUID) -> str:
                     session.add(row)
                     source_rows[unit.unit_index] = row
                 await session.flush()
-                for chunk_index, candidate in enumerate(candidates):
+                embedded_at = datetime.now(UTC)
+                for chunk_index, (candidate, vector) in enumerate(
+                    zip(candidates, vectors, strict=True)
+                ):
                     unit = cleaned[candidate.source_unit_index]
                     session.add(
                         DocumentChunk(
@@ -237,6 +277,16 @@ async def process_job(tenant_id: UUID, document_id: UUID, job_id: UUID) -> str:
                                 "cleaner_version": CLEANER_VERSION,
                                 "chunker_version": CHUNKER_VERSION,
                             },
+                            embedding=vector,
+                            embedding_model=settings.embedding_model,
+                            embedding_dimensions=settings.embedding_dimensions,
+                            embedding_input_version=EMBEDDING_INPUT_VERSION,
+                            embedding_fingerprint=embedding_fingerprint(
+                                hashlib.sha256(inputs[chunk_index].encode()).hexdigest(),
+                                settings.embedding_model,
+                                settings.embedding_dimensions,
+                            ),
+                            embedded_at=embedded_at,
                         )
                     )
                 document.document_metadata = {

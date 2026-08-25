@@ -26,7 +26,7 @@ pytestmark = [
     ),
 ]
 
-REVISION = "c5d9e2f1a804"
+REVISION = "d7e4a91bc620"
 
 
 async def test_database_is_at_expected_alembic_revision() -> None:
@@ -36,6 +36,20 @@ async def test_database_is_at_expected_alembic_revision() -> None:
         )
 
     assert revision == REVISION
+
+
+async def test_embedding_hnsw_cosine_index_exists() -> None:
+    async with engine.connect() as connection:
+        definition = await connection.scalar(
+            text(
+                "SELECT indexdef FROM pg_indexes "
+                "WHERE indexname = 'ix_document_chunks_embedding_hnsw_cosine'"
+            )
+        )
+    assert definition is not None
+    assert "USING hnsw" in definition
+    assert "vector_cosine_ops" in definition
+    assert "WHERE (embedding IS NOT NULL)" in definition
 
 
 async def test_tenant_and_uniqueness_constraints_are_enforced() -> None:
