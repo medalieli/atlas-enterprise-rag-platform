@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "FastAPI backend for the Production RAG Assistant"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "alembic>=1.16.5,<2",
     "asyncpg>=0.30.0,<0.31",
     "fastapi>=0.116.1,<0.117",
     "pgvector>=0.4.1,<0.5",
@@ -23,6 +24,7 @@ dev = [
 [tool.pytest.ini_options]
 addopts = "-ra"
 asyncio_mode = "auto"
+asyncio_default_test_loop_scope = "session"
 markers = ["integration: requires the Compose PostgreSQL service"]
 testpaths = ["tests"]
 

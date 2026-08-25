@@ -1,6 +1,6 @@
 # Project Roadmap
 
-Statuses: **Milestones 1–2 — completed.** Milestones 3–15 — pending.
+Statuses: **Milestones 1–3 — completed.** Milestones 4–15 — pending.
 
 ## 1. Repository foundation — Completed
 
@@ -14,7 +14,7 @@ Statuses: **Milestones 1–2 — completed.** Milestones 3–15 — pending.
 
 **Acceptance criteria:** A health endpoint runs; typed settings load from environment variables; PostgreSQL connectivity and pgvector availability are verified; linting, type checking, and baseline tests run through documented commands.
 
-## 3. Database models and migrations — Pending
+## 3. Database models and migrations — Completed
 
 **Goal:** Define the initial relational model and migration workflow for tenants, users, collections, documents, chunks, jobs, and conversations.
 

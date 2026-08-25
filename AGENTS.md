@@ -23,3 +23,11 @@
 - Install locked backend dependencies: `cd backend; uv sync --frozen`
 - Run all backend tests with the Compose database (PowerShell): `cd backend; $env:DATABASE_URL = "postgresql+asyncpg://rag_assistant_dev:rag_assistant_dev@localhost:5432/rag_assistant_dev"; $env:RUN_DATABASE_TESTS = "1"; uv run pytest`
 - Run backend linting: `cd backend; uv run ruff check .`
+
+## Database migration commands
+
+- Apply migrations in Compose: `docker compose run --rm api uv run alembic upgrade head`
+- Show the current revision: `docker compose run --rm api uv run alembic current`
+- Show migration history: `docker compose run --rm api uv run alembic history`
+- Reverse the latest migration for development verification only: `docker compose run --rm api uv run alembic downgrade -1`
+- Never use runtime `create_all`; all schema changes require an Alembic revision.

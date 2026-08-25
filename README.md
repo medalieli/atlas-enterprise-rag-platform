@@ -1,6 +1,6 @@
 # Production RAG Knowledge Assistant
 
-Milestone 2 provides a minimal FastAPI service and PostgreSQL 17 development database with pgvector 0.8.6. It does not yet include application tables, document ingestion, retrieval, authentication, OpenAI calls, or a frontend.
+Milestone 3 provides a minimal FastAPI service, PostgreSQL 17 with pgvector 0.8.6, and an Alembic-managed tenant-aware relational schema. It does not yet include uploads, parsing, retrieval, authentication, OpenAI calls, or a frontend.
 
 ## Prerequisites
 
@@ -53,6 +53,21 @@ uv run ruff check .
 ```
 
 To run unit tests without PostgreSQL, omit `RUN_DATABASE_TESTS`; the database integration test will be reported as skipped.
+
+## Database migrations
+
+Apply all migrations from the repository root after PostgreSQL is healthy:
+
+```powershell
+docker compose run --rm api uv run alembic upgrade head
+docker compose run --rm api uv run alembic current
+```
+
+Alembic reads `DATABASE_URL` through the same typed settings as the application. Inside Compose, the database hostname is `postgres`. Running `upgrade head` repeatedly is safe; already-applied revisions are not executed again.
+
+For host-side development, run the equivalent commands from `backend` after setting `DATABASE_URL` to the mapped host port. Do not use SQLAlchemy `create_all` for application schema changes.
+
+The [Milestone 3 data-model guide](docs/DATA_MODEL.md) explains the tables, tenant boundaries, delete behavior, and decisions deferred to later milestones.
 
 ## Troubleshooting
 
