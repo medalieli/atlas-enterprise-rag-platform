@@ -4,12 +4,15 @@ __pycache__/
 *.pyd
 .Python
 .venv/
+.uv-cache/
+.uv-python/
 venv/
 env/
 ENV/
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
+pytest-cache-files-*/
 .tox/
 .nox/
 .hypothesis/

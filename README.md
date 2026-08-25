@@ -1,41 +1,70 @@
 # Production RAG Knowledge Assistant
 
-Production RAG Knowledge Assistant is a production-oriented portfolio project for secure, multi-document organizational search. The planned application will ingest PDF and DOCX documents into tenant-isolated collections, retrieve relevant passages with hybrid search, and generate grounded answers with validated citations to source files, pages, sections, and quotes.
+Milestone 2 provides a minimal FastAPI service and PostgreSQL 17 development database with pgvector 0.8.6. It does not yet include application tables, document ingestion, retrieval, authentication, OpenAI calls, or a frontend.
 
-## Planned features
+## Prerequisites
 
-- User registration, authentication, organizations, and document collections
-- Asynchronous PDF and DOCX ingestion with structure and metadata preservation
-- Structure-aware chunking and configurable OpenAI embeddings
-- PostgreSQL semantic and keyword hybrid retrieval using pgvector and full-text search
-- Metadata and authorization filtering, reranking, and grounded answer generation
-- Server-validated citations and a PDF source viewer
-- Conversation history, document deletion, versioning, and reindexing
-- Retrieval and answer-quality evaluation, automated testing, and observability
-- Local operation through Docker Compose
+- Docker Desktop (or Docker Engine) with Docker Compose v2
+- Optional for running tools outside containers: Python 3.12 and [uv](https://docs.astral.sh/uv/)
 
-## Planned architecture
+## Configure the environment
 
-The planned system uses a Next.js frontend; a typed FastAPI backend built with Pydantic, SQLAlchemy, and Alembic; PostgreSQL with pgvector and full-text search; Celery and Redis for background work; and S3-compatible object storage with MinIO locally. PyMuPDF and python-docx will parse documents. OpenAI models will provide configurable embeddings and structured answer generation. LangChain will be used selectively, while orchestration remains plain Python unless a deterministic multi-step workflow later justifies LangGraph.
+Compose has safe local defaults, so no environment file is required. To customize ports or credentials, copy `.env.example` to `.env` and edit the copy. Never commit `.env` or production credentials.
 
-## Repository structure
+If database credentials are changed, update `DATABASE_URL` to match. Inside Compose, its hostname must remain `postgres`.
 
-```text
-.
-├── backend/          # Future backend application
-├── frontend/         # Future Next.js application
-├── infrastructure/   # Future local and deployment infrastructure
-├── evaluations/      # Future RAG evaluation assets
-├── docs/
-│   ├── PROJECT_SPEC.md
-│   └── ROADMAP.md
-├── AGENTS.md
-├── README.md
-└── .env.example
+## Start and stop
+
+From the repository root:
+
+```powershell
+docker compose up --build -d
+docker compose ps
 ```
 
-## Current status
+Stop services safely while preserving the database volume:
 
-Foundation only. The repository currently contains project documentation, configuration placeholders, and empty directories. **The application is not implemented yet.** No backend, frontend, database, infrastructure services, or RAG pipeline has been created.
+```powershell
+docker compose down
+```
 
-See the [project specification](docs/PROJECT_SPEC.md) for product requirements and the [roadmap](docs/ROADMAP.md) for the ordered implementation milestones.
+Warning: `docker compose down -v` permanently deletes the local PostgreSQL volume and all data in it.
+
+## Local endpoints
+
+- Application information: <http://localhost:8000/>
+- Liveness: <http://localhost:8000/health/live>
+- Database and pgvector readiness: <http://localhost:8000/health/ready>
+- Swagger UI: <http://localhost:8000/docs>
+
+If `API_PORT` is changed, replace `8000` in these URLs with that port.
+
+## Tests and linting
+
+Run the complete suite, including the database integration test, after Compose is healthy:
+
+```powershell
+Set-Location backend
+uv sync --frozen
+$env:DATABASE_URL = "postgresql+asyncpg://rag_assistant_dev:rag_assistant_dev@localhost:5432/rag_assistant_dev"
+$env:RUN_DATABASE_TESTS = "1"
+uv run pytest
+uv run ruff check .
+```
+
+To run unit tests without PostgreSQL, omit `RUN_DATABASE_TESTS`; the database integration test will be reported as skipped.
+
+## Troubleshooting
+
+If Docker commands are unavailable or report that the daemon is not running, install/start Docker Desktop and verify with `docker --version` and `docker compose version`.
+
+If port 8000 or 5432 is occupied, set a different host port in `.env`, for example `API_PORT=8001` or `POSTGRES_PORT=5433`. Container-to-container ports and the Compose `DATABASE_URL` do not change.
+
+Inspect service state and logs with:
+
+```powershell
+docker compose ps
+docker compose logs api postgres
+```
+
+The [project specification](docs/PROJECT_SPEC.md) defines the product, and the [roadmap](docs/ROADMAP.md) tracks later milestones.

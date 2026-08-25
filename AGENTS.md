@@ -13,3 +13,13 @@
 - Do not introduce LangGraph until the deterministic RAG pipeline works.
 - Do not claim performance or accuracy numbers that have not been measured.
 - Update documentation whenever architecture or setup changes.
+
+## Milestone 2 development commands
+
+- Validate Compose: `docker compose config`
+- Build and start: `docker compose up --build -d`
+- Check services: `docker compose ps`
+- Stop safely: `docker compose down`
+- Install locked backend dependencies: `cd backend; uv sync --frozen`
+- Run all backend tests with the Compose database (PowerShell): `cd backend; $env:DATABASE_URL = "postgresql+asyncpg://rag_assistant_dev:rag_assistant_dev@localhost:5432/rag_assistant_dev"; $env:RUN_DATABASE_TESTS = "1"; uv run pytest`
+- Run backend linting: `cd backend; uv run ruff check .`

@@ -1,6 +1,6 @@
 # Project Roadmap
 
-Statuses: **Milestone 1 — completed.** Milestones 2–15 — pending.
+Statuses: **Milestones 1–2 — completed.** Milestones 3–15 — pending.
 
 ## 1. Repository foundation — Completed
 
@@ -8,7 +8,7 @@ Statuses: **Milestone 1 — completed.** Milestones 2–15 — pending.
 
 **Acceptance criteria:** Required foundation files and directories exist; documentation agrees that no application is implemented; environment examples contain no secrets; ignore rules cover planned local artifacts; the repository passes a scope and consistency review.
 
-## 2. FastAPI and PostgreSQL/pgvector development environment — Pending
+## 2. FastAPI and PostgreSQL/pgvector development environment — Completed
 
 **Goal:** Bootstrap the backend and a reproducible local database environment with pgvector available.
 
