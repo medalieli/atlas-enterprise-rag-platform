@@ -23,6 +23,9 @@
 - Install locked backend dependencies: `cd backend; uv sync --frozen`
 - Run all backend tests with the Compose database (PowerShell): `cd backend; $env:DATABASE_URL = "postgresql+asyncpg://rag_assistant_dev:rag_assistant_dev@localhost:5432/rag_assistant_dev"; $env:RUN_DATABASE_TESTS = "1"; uv run pytest`
 - Run backend linting: `cd backend; uv run ruff check .`
+- Validate services: `docker compose config`
+- Inspect the worker: `docker compose exec worker uv run --no-sync celery -A app.worker:celery_app inspect ping`
+- Run a worker locally: `cd backend; uv run celery -A app.worker:celery_app worker --loglevel=INFO`
 
 ## Database migration commands
 

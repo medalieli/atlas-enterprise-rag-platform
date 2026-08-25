@@ -24,6 +24,13 @@ class Settings(BaseSettings):
     postgres_user: str = "rag_assistant_dev"
     postgres_password: SecretStr = SecretStr("rag_assistant_dev")
     openai_api_key: SecretStr | None = None
+    redis_url: str = "redis://localhost:6379/0"
+    document_storage_path: str = "./data/documents"
+    max_upload_bytes: int = 20 * 1024 * 1024
+    max_docx_uncompressed_bytes: int = 100 * 1024 * 1024
+    celery_max_retries: int = 3
+    development_tenant_id: str | None = None
+    development_user_id: str | None = None
 
     @field_validator("openai_api_key", mode="before")
     @classmethod

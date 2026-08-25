@@ -1,6 +1,6 @@
 # Project Roadmap
 
-Statuses: **Milestones 1–3 — completed.** Milestones 4–15 — pending.
+Statuses: **Milestones 1–4 — completed.** Milestones 5–15 — pending.
 
 ## 1. Repository foundation — Completed
 
@@ -20,7 +20,7 @@ Statuses: **Milestones 1–3 — completed.** Milestones 4–15 — pending.
 
 **Acceptance criteria:** SQLAlchemy models are typed; Alembic creates and reverses the schema; constraints and tenant keys are tested; no schema relies on runtime auto-creation.
 
-## 4. PDF/DOCX upload and asynchronous ingestion — Pending
+## 4. PDF/DOCX upload and asynchronous ingestion — Completed
 
 **Goal:** Securely accept documents, store originals, and queue observable ingestion jobs.
 

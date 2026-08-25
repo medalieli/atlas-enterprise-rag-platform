@@ -25,7 +25,7 @@ pytestmark = [
     ),
 ]
 
-REVISION = "3f2a1c9d8b7e"
+REVISION = "8b1f2d4e6a70"
 
 
 async def test_database_is_at_expected_alembic_revision() -> None:
@@ -81,6 +81,7 @@ async def test_tenant_and_uniqueness_constraints_are_enforced() -> None:
                     storage_key=f"documents/{document_a_id}",
                     content_type="application/pdf",
                     size_bytes=100,
+                    checksum_sha256="0" * 64,
                 )
             )
             await connection.execute(

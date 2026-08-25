@@ -32,11 +32,21 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-rag_assistant_dev}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rag_assistant_dev}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      REDIS_URL: redis://redis:6379/0
+      DOCUMENT_STORAGE_PATH: /data/documents
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-20971520}
+      MAX_DOCX_UNCOMPRESSED_BYTES: ${MAX_DOCX_UNCOMPRESSED_BYTES:-104857600}
+      DEVELOPMENT_TENANT_ID: ${DEVELOPMENT_TENANT_ID:-}
+      DEVELOPMENT_USER_ID: ${DEVELOPMENT_USER_ID:-}
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - document_storage:/data/documents
     healthcheck:
       test:
         - CMD
@@ -49,5 +59,41 @@ services:
       start_period: 5s
     restart: unless-stopped
 
+  redis:
+    image: redis:8.2.1-alpine3.22
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ./backend
+    command: ["uv", "run", "--no-sync", "celery", "-A", "app.worker:celery_app", "worker", "--loglevel=INFO", "--concurrency=2"]
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://rag_assistant_dev:rag_assistant_dev@postgres:5432/rag_assistant_dev}
+      REDIS_URL: redis://redis:6379/0
+      DOCUMENT_STORAGE_PATH: /data/documents
+      CELERY_MAX_RETRIES: ${CELERY_MAX_RETRIES:-3}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - document_storage:/data/documents
+    healthcheck:
+      test: ["CMD-SHELL", "uv run --no-sync celery -A app.worker:celery_app inspect ping -d celery@$$HOSTNAME --timeout 5 | grep -q pong"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
 volumes:
   postgres_data:
+  document_storage:

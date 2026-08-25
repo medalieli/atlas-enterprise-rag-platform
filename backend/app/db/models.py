@@ -37,6 +37,7 @@ class DocumentStatus(StrEnum):
 class ProcessingJobStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
+    RETRYING = "retrying"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
 
@@ -115,6 +116,10 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "tenant_id", "storage_key", name="uq_documents_tenant_storage_key"
         ),
         CheckConstraint("size_bytes >= 0", name="ck_documents_size_nonnegative"),
+        CheckConstraint(
+            "checksum_sha256 ~ '^[0-9a-f]{64}$'",
+            name="ck_documents_checksum_sha256",
+        ),
         Index("ix_documents_tenant_collection", "tenant_id", "collection_id"),
         Index("ix_documents_tenant_status", "tenant_id", "status"),
     )
@@ -129,6 +134,7 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     storage_key: Mapped[str] = mapped_column(String(1024), nullable=False)
     content_type: Mapped[str] = mapped_column(String(255), nullable=False)
     size_bytes: Mapped[int] = mapped_column(nullable=False)
+    checksum_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[DocumentStatus] = mapped_column(
         Enum(
             DocumentStatus,

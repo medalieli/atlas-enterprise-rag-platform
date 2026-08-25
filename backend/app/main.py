@@ -5,6 +5,7 @@ from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.api.documents import router as documents_router
 from app.api.health import router as health_router
 from app.core.config import get_settings
 from app.db.session import dispose_engine
@@ -19,6 +20,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 settings = get_settings()
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
 app.include_router(health_router)
+app.include_router(documents_router)
 
 
 @app.exception_handler(SQLAlchemyError)

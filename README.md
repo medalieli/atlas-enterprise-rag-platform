@@ -1,6 +1,6 @@
 # Production RAG Knowledge Assistant
 
-Milestone 3 provides a minimal FastAPI service, PostgreSQL 17 with pgvector 0.8.6, and an Alembic-managed tenant-aware relational schema. It does not yet include uploads, parsing, retrieval, authentication, OpenAI calls, or a frontend.
+Milestone 4 adds secure PDF/DOCX upload, persistent local document storage, Redis queueing, and an idempotent Celery verification worker. Parsing, retrieval, authentication, OpenAI calls, and a frontend remain deferred.
 
 ## Prerequisites
 
@@ -36,6 +36,8 @@ Warning: `docker compose down -v` permanently deletes the local PostgreSQL volum
 - Liveness: <http://localhost:8000/health/live>
 - Database and pgvector readiness: <http://localhost:8000/health/ready>
 - Swagger UI: <http://localhost:8000/docs>
+- Upload: `POST /collections/{collection_id}/documents`
+- Job status: `GET /processing-jobs/{job_id}`
 
 If `API_PORT` is changed, replace `8000` in these URLs with that port.
 
@@ -68,6 +70,11 @@ Alembic reads `DATABASE_URL` through the same typed settings as the application.
 For host-side development, run the equivalent commands from `backend` after setting `DATABASE_URL` to the mapped host port. Do not use SQLAlchemy `create_all` for application schema changes.
 
 The [Milestone 3 data-model guide](docs/DATA_MODEL.md) explains the tables, tenant boundaries, delete behavior, and decisions deferred to later milestones.
+
+The [Milestone 4 ingestion guide](docs/INGESTION.md) explains upload validation,
+storage, trusted development identity, job states, retries, idempotency, and operational
+commands. Example requests are available through Swagger after configuring a development
+identity and seed records; never send tenant identity in upload input.
 
 ## Troubleshooting
 
