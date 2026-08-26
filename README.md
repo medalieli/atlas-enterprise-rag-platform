@@ -1,7 +1,7 @@
 # Production RAG Knowledge Assistant
 
-Milestone 7 adds PostgreSQL full-text keyword search and deterministic Reciprocal Rank
-Fusion over authorized keyword and semantic candidates. Reranking, answers,
+Milestone 8 adds validated document metadata filters and a reproducible local
+cross-encoder reranker over bounded hybrid candidates. Answer generation,
 authentication, conversation memory, and a frontend remain deferred.
 
 ## Prerequisites
@@ -43,6 +43,7 @@ Warning: `docker compose down -v` permanently deletes the local PostgreSQL volum
 - Semantic retrieval: `POST /collections/{collection_id}/semantic-search`
 - Keyword retrieval: `POST /collections/{collection_id}/keyword-search`
 - Hybrid retrieval: `POST /collections/{collection_id}/hybrid-search`
+- Reranked retrieval: `POST /collections/{collection_id}/reranked-search`
 
 If `API_PORT` is changed, replace `8000` in these URLs with that port.
 
@@ -91,6 +92,10 @@ cost/privacy considerations, and limitations.
 The [Milestone 7 retrieval guide](docs/RETRIEVAL.md) documents PostgreSQL full-text
 representation, keyword search, secured candidate retrieval, Reciprocal Rank Fusion,
 score interpretation, operational migration tradeoffs, and deferred functionality.
+
+The [Milestone 8 filtering and reranking guide](docs/RERANKING.md) documents upload
+metadata, shared filter semantics, indexed PostgreSQL predicates, bounded local
+cross-encoder inference, score interpretation, and failure behavior.
 
 ## Troubleshooting
 

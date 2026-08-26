@@ -89,10 +89,29 @@ async def test_upload_status_cross_tenant_and_queue_cleanup(
             response = await client.post(
                 f"/collections/{collection_id}/documents",
                 files={"file": ("../safe.pdf", b"%PDF-1.7\nvalid", "application/pdf")},
+                data={
+                    "metadata": (
+                        '{"tags":["Finance","finance"],"department":"Legal",'
+                        '"document_type":"policy","language":"en",'
+                        '"effective_date":"2026-01-02"}'
+                    )
+                },
             )
             assert response.status_code == 202
             body = response.json()
             assert body["original_filename"] == "safe.pdf"
+            async with session_factory() as session:
+                stored = await session.scalar(
+                    select(Document).where(Document.id == body["document_id"])
+                )
+            assert stored is not None
+            assert stored.document_metadata == {
+                "tags": ["finance"],
+                "department": "legal",
+                "document_type": "policy",
+                "language": "en",
+                "effective_date": "2026-01-02",
+            }
             status_response = await client.get(f"/processing-jobs/{body['job_id']}")
             assert status_response.status_code == 200
             assert status_response.json()["status"] == "queued"
@@ -101,6 +120,18 @@ async def test_upload_status_cross_tenant_and_queue_cleanup(
                 files={"file": ("safe.pdf", b"%PDF-1.7\nvalid", "application/pdf")},
             )
             assert cross_tenant.status_code == 404
+
+            ownership_override = await client.post(
+                f"/collections/{collection_id}/documents",
+                files={"file": ("unsafe.pdf", b"%PDF-1.7\nvalid", "application/pdf")},
+                data={
+                    "metadata": (
+                        '{"tenant_id":'
+                        '"00000000-0000-0000-0000-000000000000"}'
+                    )
+                },
+            )
+            assert ownership_override.status_code == 422
 
             def queue_down(**_: object) -> None:
                 raise OSError("simulated broker outage")

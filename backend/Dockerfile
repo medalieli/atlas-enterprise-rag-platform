@@ -13,6 +13,9 @@ COPY --from=uv /uv /uvx /bin/
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
+COPY scripts/download_reranker.py ./scripts/download_reranker.py
+RUN uv run --no-sync python scripts/download_reranker.py
+
 COPY alembic.ini ./
 COPY migrations ./migrations
 COPY app ./app

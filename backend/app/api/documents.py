@@ -2,8 +2,8 @@ from pathlib import PurePath
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from pydantic import BaseModel, ValidationError
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,6 +11,7 @@ from app.auth import TrustedPrincipal, get_trusted_principal
 from app.core.config import get_settings
 from app.db.models import Collection, Document, Membership, ProcessingJob
 from app.db.session import get_session
+from app.metadata import MAX_METADATA_JSON_BYTES, DocumentMetadataInput
 from app.storage import (
     LocalDocumentStorage,
     UploadValidationError,
@@ -47,6 +48,7 @@ async def upload_document(
     file: Annotated[UploadFile, File()],
     principal: Annotated[TrustedPrincipal, Depends(get_trusted_principal)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    metadata: Annotated[str | None, Form()] = None,
 ) -> UploadResponse:
     collection = await session.scalar(
         select(Collection)
@@ -62,6 +64,18 @@ async def upload_document(
     )
     if collection is None:
         raise HTTPException(status_code=404, detail="Collection not found")
+
+    try:
+        if metadata is None:
+            document_metadata = DocumentMetadataInput()
+        else:
+            if len(metadata.encode()) > MAX_METADATA_JSON_BYTES:
+                raise ValueError("metadata is too large")
+            document_metadata = DocumentMetadataInput.model_validate_json(metadata)
+    except (ValidationError, ValueError) as exc:
+        raise HTTPException(
+            status_code=422, detail="Document metadata is invalid"
+        ) from exc
 
     filename = PurePath(file.filename or "").name[:512]
     extension = PurePath(filename).suffix.lower()
@@ -86,6 +100,7 @@ async def upload_document(
             content_type=file.content_type or "",
             size_bytes=stored.size_bytes,
             checksum_sha256=stored.checksum_sha256,
+            document_metadata=document_metadata.to_storage(),
         )
         job = ProcessingJob(
             id=job_id,

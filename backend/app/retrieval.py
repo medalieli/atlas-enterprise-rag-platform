@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import func, select, text
@@ -6,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.db.models import Document, DocumentChunk, DocumentStatus
+from app.metadata import MetadataFilter, document_filter_predicates
 
 TEXT_SEARCH_CONFIGURATION = "simple"
 TEXT_SEARCH_REGCONFIG_SQL = text("'simple'::regconfig")
@@ -25,6 +27,9 @@ class RetrievalCandidate:
     start_offset: int
     end_offset: int
     score: float
+    content_type: str = "application/octet-stream"
+    document_created_at: datetime | None = None
+    document_metadata: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -42,12 +47,20 @@ def candidate_depth(top_k: int) -> int:
 
 
 def _candidate(
-    chunk: DocumentChunk, filename: str, score: float
+    chunk: DocumentChunk,
+    filename: str,
+    content_type: str,
+    document_created_at: datetime,
+    document_metadata: dict[str, object],
+    score: float,
 ) -> RetrievalCandidate:
     return RetrievalCandidate(
         chunk_id=chunk.id,
         document_id=chunk.document_id,
         document_name=filename,
+        content_type=content_type,
+        document_created_at=document_created_at,
+        document_metadata=document_metadata,
         content=chunk.content,
         page_number=chunk.page_number,
         section_path=chunk.section,
@@ -64,9 +77,10 @@ async def semantic_candidates(
     query_vector: list[float],
     limit: int,
     settings: Settings,
+    filters: MetadataFilter | None = None,
 ) -> list[RetrievalCandidate]:
     distance = DocumentChunk.embedding.cosine_distance(query_vector).label("distance")
-    filters = (
+    scope_filters = (
         DocumentChunk.tenant_id == tenant_id,
         Document.collection_id == collection_id,
         Document.status == DocumentStatus.AVAILABLE,
@@ -75,13 +89,20 @@ async def semantic_candidates(
         DocumentChunk.embedding_dimensions == settings.embedding_dimensions,
     )
     query = (
-        select(DocumentChunk, Document.filename, distance)
+        select(
+            DocumentChunk,
+            Document.filename,
+            Document.content_type,
+            Document.created_at,
+            Document.document_metadata,
+            distance,
+        )
         .join(
             Document,
             (Document.id == DocumentChunk.document_id)
             & (Document.tenant_id == DocumentChunk.tenant_id),
         )
-        .where(*filters)
+        .where(*scope_filters, *document_filter_predicates(filters))
         .order_by(distance, DocumentChunk.id)
         .limit(limit)
     )
@@ -94,7 +115,7 @@ async def semantic_candidates(
             (Document.id == DocumentChunk.document_id)
             & (Document.tenant_id == DocumentChunk.tenant_id),
         )
-        .where(*filters)
+        .where(*scope_filters, *document_filter_predicates(filters))
     )
     expected = min(limit, scoped_count or 0)
     if len(rows) < expected:
@@ -102,8 +123,22 @@ async def semantic_candidates(
         await session.execute(text("SET LOCAL enable_bitmapscan = off"))
         rows = (await session.execute(query)).all()
     return [
-        _candidate(chunk, filename, 1.0 - float(distance_value))
-        for chunk, filename, distance_value in rows
+        _candidate(
+            chunk,
+            filename,
+            content_type,
+            document_created_at,
+            document_metadata,
+            1.0 - float(distance_value),
+        )
+        for (
+            chunk,
+            filename,
+            content_type,
+            document_created_at,
+            document_metadata,
+            distance_value,
+        ) in rows
     ]
 
 
@@ -113,13 +148,21 @@ async def keyword_candidates(
     collection_id: UUID,
     query_text: str,
     limit: int,
+    filters: MetadataFilter | None = None,
 ) -> list[RetrievalCandidate]:
     tsquery = func.websearch_to_tsquery(TEXT_SEARCH_REGCONFIG_SQL, query_text)
     keyword_score = func.ts_rank_cd(DocumentChunk.search_vector, tsquery).label(
         "keyword_score"
     )
     query = (
-        select(DocumentChunk, Document.filename, keyword_score)
+        select(
+            DocumentChunk,
+            Document.filename,
+            Document.content_type,
+            Document.created_at,
+            Document.document_metadata,
+            keyword_score,
+        )
         .join(
             Document,
             (Document.id == DocumentChunk.document_id)
@@ -129,6 +172,7 @@ async def keyword_candidates(
             DocumentChunk.tenant_id == tenant_id,
             Document.collection_id == collection_id,
             Document.status == DocumentStatus.AVAILABLE,
+            *document_filter_predicates(filters),
             func.numnode(tsquery) > 0,
             DocumentChunk.search_vector.op("@@")(tsquery),
         )
@@ -137,8 +181,22 @@ async def keyword_candidates(
     )
     rows = (await session.execute(query)).all()
     return [
-        _candidate(chunk, filename, float(score))
-        for chunk, filename, score in rows
+        _candidate(
+            chunk,
+            filename,
+            content_type,
+            document_created_at,
+            document_metadata,
+            float(score),
+        )
+        for (
+            chunk,
+            filename,
+            content_type,
+            document_created_at,
+            document_metadata,
+            score,
+        ) in rows
     ]
 
 

@@ -122,8 +122,49 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "checksum_sha256 ~ '^[0-9a-f]{64}$'",
             name="ck_documents_checksum_sha256",
         ),
+        CheckConstraint(
+            "jsonb_typeof(metadata) = 'object'",
+            name="ck_documents_metadata_object",
+        ),
+        CheckConstraint(
+            "pg_column_size(metadata) <= 8192",
+            name="ck_documents_metadata_size",
+        ),
         Index("ix_documents_tenant_collection", "tenant_id", "collection_id"),
         Index("ix_documents_tenant_status", "tenant_id", "status"),
+        Index(
+            "ix_documents_tenant_collection_created_at",
+            "tenant_id",
+            "collection_id",
+            "created_at",
+        ),
+        Index(
+            "ix_documents_tenant_collection_content_type",
+            "tenant_id",
+            "collection_id",
+            "content_type",
+        ),
+        Index(
+            "ix_documents_tenant_collection_filename",
+            "tenant_id",
+            "collection_id",
+            "filename",
+        ),
+        Index(
+            "ix_documents_metadata_tags_gin",
+            text("(metadata -> 'tags')"),
+            postgresql_using="gin",
+        ),
+        Index("ix_documents_metadata_department", text("(metadata ->> 'department')")),
+        Index(
+            "ix_documents_metadata_document_type",
+            text("(metadata ->> 'document_type')"),
+        ),
+        Index("ix_documents_metadata_language", text("(metadata ->> 'language')")),
+        Index(
+            "ix_documents_metadata_effective_date",
+            text("(metadata ->> 'effective_date')"),
+        ),
     )
 
     tenant_id: Mapped[UUID] = mapped_column(

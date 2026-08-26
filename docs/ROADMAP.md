@@ -44,7 +44,7 @@ Statuses: **Milestones 1–7 — completed.** Milestones 8–15 — pending.
 
 **Acceptance criteria:** Full-text indexes and migrations exist; keyword and vector candidates are fused deterministically; tenant filters apply to both paths; evaluation compares component and hybrid retrieval.
 
-## 8. Reranking and metadata filtering — Pending
+## 8. Reranking and metadata filtering — Complete
 
 **Goal:** Improve candidate ordering and support safe, explicit filters without weakening authorization.
 

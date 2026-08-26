@@ -7,7 +7,7 @@ import httpx
 import pytest
 from sqlalchemy import delete
 
-from app.api.search import get_embedding_provider
+from app.api.search import get_embedding_provider, get_reranker_dependency
 from app.auth import TrustedPrincipal, get_trusted_principal
 from app.db.models import (
     Collection,
@@ -26,6 +26,7 @@ from app.embeddings import (
     embedding_fingerprint,
 )
 from app.main import app
+from app.reranking import RerankInput, RerankScore
 
 pytestmark = [
     pytest.mark.asyncio,
@@ -62,6 +63,7 @@ async def _add_chunk(
     content: str,
     section: str,
     vector: list[float],
+    metadata: dict[str, object] | None = None,
 ) -> UUID:
     document_id, unit_id = uuid4(), uuid4()
     content_hash = hashlib.sha256(content.encode()).hexdigest()
@@ -77,6 +79,7 @@ async def _add_chunk(
                 size_bytes=len(content),
                 checksum_sha256=hashlib.sha256(label.encode()).hexdigest(),
                 status=DocumentStatus.AVAILABLE,
+                document_metadata=metadata or {},
             )
         )
         await session.flush()
@@ -119,6 +122,14 @@ async def _add_chunk(
     return document_id
 
 
+class IntegrationFakeReranker:
+    def score(self, query: str, candidates: list[RerankInput]) -> list[RerankScore]:
+        return [
+            RerankScore(item.candidate_id, 10.0 if "refund" in item.passage else 0.0)
+            for item in candidates
+        ]
+
+
 async def seed_hybrid() -> tuple[TrustedPrincipal, UUID, UUID, UUID, UUID]:
     tenant_id, other_tenant_id, user_id = uuid4(), uuid4(), uuid4()
     collection_id, other_collection_id = uuid4(), uuid4()
@@ -157,6 +168,13 @@ async def seed_hybrid() -> tuple[TrustedPrincipal, UUID, UUID, UUID, UUID]:
         "within 30 days. Café Québec support is available.",
         "Enterprise Refund Policy",
         [1.0] + [0.0] * 1535,
+        {
+            "tags": ["refund", "enterprise"],
+            "department": "legal",
+            "document_type": "policy",
+            "language": "en",
+            "effective_date": "2026-01-01",
+        },
     )
     await _add_chunk(
         tenant_id,
@@ -174,6 +192,13 @@ async def seed_hybrid() -> tuple[TrustedPrincipal, UUID, UUID, UUID, UUID]:
         "ENTREFUND30 equipment appendix and ACME-SLA-42 identifier register.",
         "Exact identifiers",
         [0.0, 1.0] + [0.0] * 1534,
+        {
+            "tags": ["operations"],
+            "department": "facilities",
+            "document_type": "manual",
+            "language": "en",
+            "effective_date": "2025-01-01",
+        },
     )
     await _add_chunk(
         tenant_id,
@@ -365,6 +390,73 @@ async def test_hybrid_provider_failure_is_safe_and_does_not_downgrade() -> None:
             assert response.status_code == 503
             assert response.json() == {"detail": "Embedding provider unavailable"}
             assert provider.calls == 1
+    finally:
+        app.dependency_overrides.clear()
+        await _cleanup(principal.tenant_id, other_tenant_id, principal.user_id)
+
+
+async def test_metadata_filters_apply_identically_before_all_retrieval_modes() -> None:
+    principal, collection_id, _, other_tenant_id, both_id = await seed_hybrid()
+    provider = CountingQueryProvider()
+
+    async def principal_override() -> TrustedPrincipal:
+        return principal
+
+    app.dependency_overrides[get_trusted_principal] = principal_override
+    app.dependency_overrides[get_embedding_provider] = lambda: provider
+    app.dependency_overrides[get_reranker_dependency] = IntegrationFakeReranker
+    filters = {
+        "tags_any": ["refund"],
+        "tags_all": ["refund", "enterprise"],
+        "departments": ["legal"],
+        "document_types": ["policy"],
+        "languages": ["en"],
+        "effective_from": "2026-01-01",
+        "effective_to": "2026-01-01",
+    }
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            for mode in ("semantic", "keyword", "hybrid", "reranked"):
+                response = await client.post(
+                    f"/collections/{collection_id}/{mode}-search",
+                    json={
+                        "query": "ENTREFUND30 refund",
+                        "top_k": 5,
+                        "filters": filters,
+                    },
+                )
+                assert response.status_code == 200, response.text
+                results = response.json()["results"]
+                assert results
+                assert {item["document_id"] for item in results} == {str(both_id)}
+            assert provider.calls == 3
+            too_many = await client.post(
+                f"/collections/{collection_id}/reranked-search",
+                json={"query": "refund", "top_k": 31},
+            )
+            assert too_many.status_code == 422
+            excluded = await client.post(
+                f"/collections/{collection_id}/hybrid-search",
+                json={
+                    "query": "ENTREFUND30 refund",
+                    "top_k": 5,
+                    "filters": {"departments": ["facilities"]},
+                },
+            )
+            assert all(
+                item["document_id"] != str(both_id)
+                for item in excluded.json()["results"]
+            )
+            invalid = await client.post(
+                f"/collections/{collection_id}/keyword-search",
+                json={
+                    "query": "ENTREFUND30",
+                    "filters": {"tenant_id": str(other_tenant_id)},
+                },
+            )
+            assert invalid.status_code == 422
     finally:
         app.dependency_overrides.clear()
         await _cleanup(principal.tenant_id, other_tenant_id, principal.user_id)

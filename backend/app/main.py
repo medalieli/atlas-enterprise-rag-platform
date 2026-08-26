@@ -10,10 +10,12 @@ from app.api.health import router as health_router
 from app.api.search import router as search_router
 from app.core.config import get_settings
 from app.db.session import dispose_engine
+from app.reranking import warm_reranker
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    await warm_reranker()
     yield
     await dispose_engine()
 

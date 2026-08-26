@@ -26,7 +26,7 @@ pytestmark = [
     ),
 ]
 
-REVISION = "e8f7a6b5c4d3"
+REVISION = "f9a8b7c6d5e4"
 
 
 async def test_database_is_at_expected_alembic_revision() -> None:
@@ -74,6 +74,43 @@ async def test_generated_search_vector_and_gin_index_are_explicit() -> None:
     assert "content" in generated
     assert definition is not None
     assert "USING gin (search_vector)" in definition
+
+
+async def test_document_metadata_constraints_and_indexes_exist() -> None:
+    expected_indexes = {
+        "ix_documents_tenant_collection_created_at",
+        "ix_documents_tenant_collection_content_type",
+        "ix_documents_tenant_collection_filename",
+        "ix_documents_metadata_tags_gin",
+        "ix_documents_metadata_department",
+        "ix_documents_metadata_document_type",
+        "ix_documents_metadata_language",
+        "ix_documents_metadata_effective_date",
+    }
+    async with engine.connect() as connection:
+        indexes = set(
+            (
+                await connection.execute(
+                    text(
+                        "SELECT indexname FROM pg_indexes "
+                        "WHERE tablename = 'documents'"
+                    )
+                )
+            ).scalars()
+        )
+        constraints = set(
+            (
+                await connection.execute(
+                    text(
+                        "SELECT conname FROM pg_constraint "
+                        "WHERE conrelid = 'documents'::regclass"
+                    )
+                )
+            ).scalars()
+        )
+    assert expected_indexes <= indexes
+    assert "ck_documents_metadata_object" in constraints
+    assert "ck_documents_metadata_size" in constraints
 
 
 async def test_full_text_operator_is_plannable_without_assuming_index_choice() -> None:

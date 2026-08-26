@@ -32,6 +32,14 @@ class Settings(BaseSettings):
     embedding_provider_max_retries: int = Field(default=0, ge=0, le=2)
     embedding_max_input_tokens: int = Field(default=8191, ge=1, le=8192)
     embedding_max_batch_tokens: int = Field(default=300_000, ge=1, le=300_000)
+    reranker_model_id: str = "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
+    reranker_model_revision: str = "1427fd652930e4ba29e8149678df786c240d8825"
+    reranker_model_path: str = "/models/reranker"
+    reranker_candidate_limit: int = Field(default=30, ge=1, le=200)
+    reranker_batch_size: int = Field(default=8, ge=1, le=64)
+    reranker_max_length: int = Field(default=512, ge=32, le=1024)
+    reranker_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
+    reranker_max_concurrency: int = Field(default=2, ge=1, le=8)
     redis_url: str = "redis://localhost:6379/0"
     document_storage_path: str = "./data/documents"
     max_upload_bytes: int = 20 * 1024 * 1024
