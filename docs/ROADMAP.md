@@ -1,6 +1,6 @@
 # Project Roadmap
 
-Statuses: **Milestones 1–6 — completed.** Milestones 7–15 — pending.
+Statuses: **Milestones 1–7 — completed.** Milestones 8–15 — pending.
 
 ## 1. Repository foundation — Completed
 
@@ -38,7 +38,7 @@ Statuses: **Milestones 1–6 — completed.** Milestones 7–15 — pending.
 
 **Acceptance criteria:** Embedding calls are batched and retry-safe; model and dimensions are recorded; vectors are indexed; vector search respects tenant scope; deterministic integration tests cover ranking and failures.
 
-## 7. PostgreSQL full-text search and hybrid retrieval — Pending
+## 7. PostgreSQL full-text search and hybrid retrieval — Completed
 
 **Goal:** Combine lexical and semantic evidence through a documented fusion strategy.
 

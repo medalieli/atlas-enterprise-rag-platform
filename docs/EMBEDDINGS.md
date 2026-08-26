@@ -15,9 +15,10 @@ are token-counted and batched by item count and aggregate tokens without changin
 OpenAI calls occur outside database transactions. Response indexes, count, dimension, and
 values are validated; NaN, infinity, and all-zero vectors are rejected. A short transaction
 publishes source units, chunks, complete embedding metadata, document availability, and job
-success together. Permanent errors fail visibly without partial publication. Transient
-timeouts, connection errors, rate limits, and server errors use bounded Celery retries.
-SDK retries default to zero so retry loops do not multiply.
+success together. Permanent errors fail visibly without partial publication. Billing and
+quota errors are permanent; genuine temporary request/token rate limits, timeouts,
+connection errors, and server errors use bounded Celery retries. SDK retries default to
+zero so retry loops do not multiply.
 
 A duplicate completed task exits before provider construction and makes zero calls. An API
 request may have succeeded immediately before a worker crash; since OpenAI and PostgreSQL
@@ -69,7 +70,7 @@ Embedding sends chunk/query text to the provider and incurs usage cost. Operator
 assess data classification, retention, regional processing, and provider terms. Text,
 vectors, keys, and authorization headers are never logged.
 
-Semantic similarity is not factual verification. Full-text/hybrid search, reranking,
-answers, validated citations, authentication, conversation memory, lifecycle reindexing,
-frontend work, evaluation/observability expansion, and deployment hardening remain
-Milestones 7 through 15.
+Semantic similarity is not factual verification. Full-text and hybrid retrieval are
+documented in `docs/RETRIEVAL.md`. Reranking, answers, validated citations,
+authentication, conversation memory, lifecycle reindexing, frontend work, expanded
+evaluation/observability, and deployment hardening remain deferred.

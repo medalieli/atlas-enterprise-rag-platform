@@ -5,6 +5,7 @@ from uuid import UUID
 from pgvector.sqlalchemy import VECTOR
 from sqlalchemy import (
     CheckConstraint,
+    Computed,
     DateTime,
     Enum,
     ForeignKey,
@@ -16,7 +17,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -222,6 +223,11 @@ class DocumentChunk(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             postgresql_ops={"embedding": "vector_cosine_ops"},
             postgresql_where=text("embedding IS NOT NULL"),
         ),
+        Index(
+            "ix_document_chunks_search_vector_gin",
+            "search_vector",
+            postgresql_using="gin",
+        ),
     )
 
     tenant_id: Mapped[UUID] = mapped_column(
@@ -246,6 +252,16 @@ class DocumentChunk(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         nullable=False,
         default=dict,
         server_default=text("'{}'::jsonb"),
+    )
+    search_vector: Mapped[str] = mapped_column(
+        TSVECTOR,
+        Computed(
+            "setweight(to_tsvector('simple'::regconfig, "
+            "coalesce(section, '')), 'A') || "
+            "setweight(to_tsvector('simple'::regconfig, content), 'B')",
+            persisted=True,
+        ),
+        nullable=False,
     )
     embedding: Mapped[list[float] | None] = mapped_column(VECTOR(1536))
     embedding_model: Mapped[str | None] = mapped_column(String(200))

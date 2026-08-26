@@ -1,4 +1,4 @@
-from sqlalchemy import ForeignKeyConstraint, UniqueConstraint
+from sqlalchemy import Computed, ForeignKeyConstraint, UniqueConstraint
 
 from app.db import models  # noqa: F401
 from app.db.base import Base
@@ -63,3 +63,13 @@ def test_scoped_uniqueness_constraints_are_declared() -> None:
     }
 
     assert expected_constraints <= actual_constraints
+
+
+def test_search_vector_is_stored_and_uses_explicit_simple_configuration() -> None:
+    column = Base.metadata.tables["document_chunks"].c.search_vector
+    assert isinstance(column.computed, Computed)
+    assert column.computed.persisted is True
+    expression = str(column.computed.sqltext)
+    assert "'simple'::regconfig" in expression
+    assert "section" in expression
+    assert "content" in expression

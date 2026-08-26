@@ -1,8 +1,8 @@
 # Production RAG Knowledge Assistant
 
-Milestone 6 adds validated OpenAI embeddings, atomic vector publication, and authorized
-semantic pgvector retrieval. Full-text/hybrid search, reranking, answers, authentication,
-conversation memory, and a frontend remain deferred.
+Milestone 7 adds PostgreSQL full-text keyword search and deterministic Reciprocal Rank
+Fusion over authorized keyword and semantic candidates. Reranking, answers,
+authentication, conversation memory, and a frontend remain deferred.
 
 ## Prerequisites
 
@@ -41,6 +41,8 @@ Warning: `docker compose down -v` permanently deletes the local PostgreSQL volum
 - Upload: `POST /collections/{collection_id}/documents`
 - Job status: `GET /processing-jobs/{job_id}`
 - Semantic retrieval: `POST /collections/{collection_id}/semantic-search`
+- Keyword retrieval: `POST /collections/{collection_id}/keyword-search`
+- Hybrid retrieval: `POST /collections/{collection_id}/hybrid-search`
 
 If `API_PORT` is changed, replace `8000` in these URLs with that port.
 
@@ -85,6 +87,10 @@ chunking rules, fingerprints, exact source traceability, and unsupported documen
 The [Milestone 6 embedding guide](docs/EMBEDDINGS.md) documents provider configuration,
 batching, fingerprints, atomic ingestion, backfill, vector indexing, semantic search,
 cost/privacy considerations, and limitations.
+
+The [Milestone 7 retrieval guide](docs/RETRIEVAL.md) documents PostgreSQL full-text
+representation, keyword search, secured candidate retrieval, Reciprocal Rank Fusion,
+score interpretation, operational migration tradeoffs, and deferred functionality.
 
 ## Troubleshooting
 

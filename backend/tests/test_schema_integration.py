@@ -26,7 +26,7 @@ pytestmark = [
     ),
 ]
 
-REVISION = "d7e4a91bc620"
+REVISION = "e8f7a6b5c4d3"
 
 
 async def test_database_is_at_expected_alembic_revision() -> None:
@@ -50,6 +50,47 @@ async def test_embedding_hnsw_cosine_index_exists() -> None:
     assert "USING hnsw" in definition
     assert "vector_cosine_ops" in definition
     assert "WHERE (embedding IS NOT NULL)" in definition
+
+
+async def test_generated_search_vector_and_gin_index_are_explicit() -> None:
+    async with engine.connect() as connection:
+        generated = await connection.scalar(
+            text(
+                "SELECT generation_expression FROM information_schema.columns "
+                "WHERE table_name = 'document_chunks' "
+                "AND column_name = 'search_vector'"
+            )
+        )
+        definition = await connection.scalar(
+            text(
+                "SELECT indexdef FROM pg_indexes "
+                "WHERE indexname = 'ix_document_chunks_search_vector_gin'"
+            )
+        )
+    assert generated is not None
+    assert "'simple'::regconfig" in generated
+    assert "setweight" in generated
+    assert "section" in generated
+    assert "content" in generated
+    assert definition is not None
+    assert "USING gin (search_vector)" in definition
+
+
+async def test_full_text_operator_is_plannable_without_assuming_index_choice() -> None:
+    async with engine.connect() as connection:
+        plan_rows = (
+            await connection.execute(
+                text(
+                    "EXPLAIN (COSTS OFF) "
+                    "SELECT id FROM document_chunks "
+                    "WHERE search_vector @@ "
+                    "websearch_to_tsquery('simple'::regconfig, 'ENTREFUND30')"
+                )
+            )
+        ).scalars().all()
+    plan = "\n".join(plan_rows)
+    assert "search_vector" in plan
+    assert "@@" in plan
 
 
 async def test_tenant_and_uniqueness_constraints_are_enforced() -> None:
