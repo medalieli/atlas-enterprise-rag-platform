@@ -43,10 +43,31 @@ SAFE_PARSE = "Document content could not be processed safely"
 SAFE_TRANSIENT = "Temporary ingestion failure; retry scheduled"
 SAFE_RETRY_EXHAUSTED = "Ingestion failed after retry limit"
 SAFE_EMBEDDING = "Document embeddings could not be generated safely"
+MAX_TOTAL_RETRY_DELAY_SECONDS = 120
 
 
 class TransientIngestionError(Exception):
-    pass
+    def __init__(self, retry_after_seconds: float | None = None) -> None:
+        super().__init__("Temporary ingestion failure")
+        self.retry_after_seconds = retry_after_seconds
+
+
+def _retry_delay(retries: int, retry_after_seconds: float | None) -> int | None:
+    """Return a bounded delay, or None when Retry-After exceeds the retry budget."""
+    prior_maximum = sum(
+        delay + delay // 2
+        for delay in (2 ** (attempt + 1) for attempt in range(retries))
+    )
+    remaining = MAX_TOTAL_RETRY_DELAY_SECONDS - prior_maximum
+    if remaining <= 0:
+        return None
+    base = min(60, 2 ** (retries + 1))
+    delay = base + secrets.randbelow(max(1, base // 2 + 1))
+    if retry_after_seconds is not None:
+        if retry_after_seconds > remaining:
+            return None
+        delay = max(delay, int(retry_after_seconds + 0.999))
+    return min(delay, remaining)
 
 
 def _advisory_key(job_id: UUID) -> int:
@@ -199,9 +220,15 @@ async def process_job(
                     raise PermanentEmbeddingError("Embedding response count mismatch")
             except TransientEmbeddingError as exc:
                 await _mark_retrying(tenant_id, document_id, job_id)
-                raise TransientIngestionError from exc
-            except PermanentEmbeddingError:
-                await _mark_failed(tenant_id, document_id, job_id, SAFE_EMBEDDING)
+                retry_after = (
+                    exc.metadata.retry_after_seconds if exc.metadata else None
+                )
+                raise TransientIngestionError(retry_after) from exc
+            except PermanentEmbeddingError as exc:
+                message = SAFE_EMBEDDING
+                if exc.metadata and exc.metadata.code:
+                    message = f"{message} (provider_code={exc.metadata.code})"
+                await _mark_failed(tenant_id, document_id, job_id, message)
                 return "failed"
 
             async with session_factory() as session, session.begin():
@@ -337,9 +364,17 @@ def verify_original_task(
         if self.request.retries >= settings.celery_max_retries:
             run_async(mark_retry_exhausted(job_uuid, tenant_uuid, document_uuid))
             return "failed"
-        delay = min(60, 2 ** (self.request.retries + 1))
+        retry_after = (
+            exc.retry_after_seconds
+            if isinstance(exc, TransientIngestionError)
+            else None
+        )
+        delay = _retry_delay(self.request.retries, retry_after)
+        if delay is None:
+            run_async(mark_retry_exhausted(job_uuid, tenant_uuid, document_uuid))
+            return "failed"
         raise self.retry(
             exc=exc,
-            countdown=delay + secrets.randbelow(max(1, delay // 2 + 1)),
+            countdown=delay,
             max_retries=settings.celery_max_retries,
         ) from exc

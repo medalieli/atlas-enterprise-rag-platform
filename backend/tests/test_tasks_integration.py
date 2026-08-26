@@ -17,7 +17,7 @@ from app.db.models import (
     ProcessingJobStatus,
 )
 from app.db.session import session_factory
-from app.embeddings import PermanentEmbeddingError
+from app.embeddings import PermanentEmbeddingError, ProviderErrorMetadata
 from tests.fixture_builders import pdf_bytes
 
 pytestmark = [
@@ -44,6 +44,15 @@ class FakeEmbeddingProvider:
 class FailingEmbeddingProvider(FakeEmbeddingProvider):
     async def embed_documents(self, texts: object) -> list[list[float]]:
         raise PermanentEmbeddingError("synthetic permanent failure")
+
+
+class QuotaEmbeddingProvider(FakeEmbeddingProvider):
+    async def embed_documents(self, texts: object) -> list[list[float]]:
+        self.calls += 1
+        raise PermanentEmbeddingError(
+            "synthetic quota failure",
+            ProviderErrorMetadata(429, "insufficient_quota", "quota", False),
+        )
 
 
 async def make_job(
@@ -252,3 +261,38 @@ async def test_embedding_failure_publishes_no_partial_chunks(
             assert job.error_message == tasks.SAFE_EMBEDDING
     finally:
         await cleanup(tenant_id)
+
+
+async def test_permanent_quota_failure_has_one_attempt(
+    tmp_path: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = str(tmp_path)
+    monkeypatch.setattr(tasks, "get_settings", lambda: settings(root))
+    tenant_id, document_id, job_id = await make_job(root, create_file=True)
+    provider = QuotaEmbeddingProvider()
+    try:
+        result = await tasks.process_job(tenant_id, document_id, job_id, provider)
+        assert result == "failed"
+        async with session_factory() as session:
+            job = await session.get(ProcessingJob, job_id)
+            assert job is not None
+            assert job.status == ProcessingJobStatus.FAILED
+            assert job.attempt_count == 1
+            assert job.error_message is not None
+            assert "provider_code=insufficient_quota" in job.error_message
+        assert provider.calls == 1
+    finally:
+        await cleanup(tenant_id)
+
+
+async def test_temporary_retry_delay_respects_retry_after_and_is_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(tasks.secrets, "randbelow", lambda _: 0)
+    assert tasks._retry_delay(0, 7) == 7
+    assert tasks._retry_delay(0, tasks.MAX_TOTAL_RETRY_DELAY_SECONDS + 1) is None
+    assert all(
+        (delay := tasks._retry_delay(retries, None)) is not None
+        and delay <= tasks.MAX_TOTAL_RETRY_DELAY_SECONDS
+        for retries in range(4)
+    )

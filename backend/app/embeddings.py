@@ -1,8 +1,11 @@
 import hashlib
 import json
+import logging
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Protocol
 
 import tiktoken
@@ -20,10 +23,47 @@ from openai import (
 from app.core.config import Settings
 
 EMBEDDING_INPUT_VERSION = "embedding-input-v1"
+logger = logging.getLogger(__name__)
+
+PERMANENT_QUOTA_CODES = frozenset(
+    {
+        "credit_balance_exhausted",
+        "organization_spend_limit_exceeded",
+        "project_spend_limit_exceeded",
+        "organization_usage_limit_exceeded",
+        "insufficient_quota",
+    }
+)
+TEMPORARY_RATE_LIMIT_CODES = frozenset({"rate_limit_exceeded"})
+TEMPORARY_RATE_LIMIT_TYPES = frozenset(
+    {
+        "rate_limit_exceeded",
+        "requests",
+        "requests_per_minute",
+        "tokens",
+        "tokens_per_minute",
+    }
+)
+
+
+@dataclass(frozen=True)
+class ProviderErrorMetadata:
+    http_status: int | None
+    code: str | None
+    error_type: str | None
+    retryable: bool
+    retry_after_seconds: float | None = None
+    request_id: str | None = None
 
 
 class EmbeddingError(Exception):
     """Base error safe for orchestration boundaries."""
+
+    def __init__(
+        self, message: str, metadata: ProviderErrorMetadata | None = None
+    ) -> None:
+        super().__init__(message)
+        self.metadata = metadata
 
 
 class TransientEmbeddingError(EmbeddingError):
@@ -36,6 +76,61 @@ class PermanentEmbeddingError(EmbeddingError):
 
 class EmbeddingConfigurationError(PermanentEmbeddingError):
     pass
+
+
+def _normalized_string(value: object) -> str | None:
+    return value if isinstance(value, str) and value.strip() else None
+
+
+def _retry_after_seconds(value: str | None) -> float | None:
+    if not value:
+        return None
+    try:
+        seconds = float(value)
+        return seconds if seconds >= 0 else None
+    except ValueError:
+        try:
+            parsed = parsedate_to_datetime(value)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=UTC)
+            return max(0.0, (parsed - datetime.now(UTC)).total_seconds())
+        except (TypeError, ValueError, OverflowError):
+            return None
+
+
+def normalize_rate_limit_error(exc: RateLimitError) -> ProviderErrorMetadata:
+    body = exc.body if isinstance(exc.body, dict) else {}
+    nested = body.get("error")
+    error = nested if isinstance(nested, dict) else body
+    code = _normalized_string(error.get("code"))
+    error_type = _normalized_string(error.get("type"))
+    # OpenAI may use insufficient_quota as either the code or the type.
+    permanent = code in PERMANENT_QUOTA_CODES or error_type in PERMANENT_QUOTA_CODES
+    temporary = (
+        code in TEMPORARY_RATE_LIMIT_CODES or error_type in TEMPORARY_RATE_LIMIT_TYPES
+    )
+    headers = exc.response.headers
+    return ProviderErrorMetadata(
+        http_status=exc.status_code,
+        code=code,
+        error_type=error_type,
+        retryable=temporary and not permanent,
+        retry_after_seconds=_retry_after_seconds(headers.get("retry-after")),
+        request_id=headers.get("x-request-id"),
+    )
+
+
+def _log_provider_error(metadata: ProviderErrorMetadata) -> None:
+    logger.warning(
+        "Embedding provider request failed status=%s code=%s type=%s "
+        "retryable=%s retry_after_present=%s request_id=%s",
+        metadata.http_status,
+        metadata.code,
+        metadata.error_type,
+        metadata.retryable,
+        metadata.retry_after_seconds is not None,
+        metadata.request_id,
+    )
 
 
 class EmbeddingProvider(Protocol):
@@ -122,12 +217,18 @@ class OpenAIEmbeddingProvider:
                 dimensions=self.settings.embedding_dimensions,
                 encoding_format="float",
             )
-        except (
-            APITimeoutError,
-            APIConnectionError,
-            RateLimitError,
-            InternalServerError,
-        ) as exc:
+        except RateLimitError as exc:
+            metadata = normalize_rate_limit_error(exc)
+            _log_provider_error(metadata)
+            error_type = (
+                TransientEmbeddingError
+                if metadata.retryable
+                else PermanentEmbeddingError
+            )
+            raise error_type(
+                "Embedding provider rate limit or quota error", metadata
+            ) from exc
+        except (APITimeoutError, APIConnectionError, InternalServerError) as exc:
             raise TransientEmbeddingError(
                 "Embedding provider temporarily unavailable"
             ) from exc
