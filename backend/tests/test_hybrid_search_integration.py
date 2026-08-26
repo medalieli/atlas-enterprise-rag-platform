@@ -7,6 +7,14 @@ import httpx
 import pytest
 from sqlalchemy import delete
 
+from app.answering import (
+    AnswerStatus,
+    GeneratedAnswer,
+    GeneratedClaim,
+    GenerationResult,
+    GenerationUsage,
+)
+from app.api.answers import get_answer_generator_dependency
 from app.api.search import get_embedding_provider, get_reranker_dependency
 from app.auth import TrustedPrincipal, get_trusted_principal
 from app.db.models import (
@@ -128,6 +136,52 @@ class IntegrationFakeReranker:
             RerankScore(item.candidate_id, 10.0 if "refund" in item.passage else 0.0)
             for item in candidates
         ]
+
+
+class IntegrationFakeAnswerGenerator:
+    def __init__(self, mode: str = "answered") -> None:
+        self.mode = mode
+        self.calls = 0
+
+    async def generate(self, query: str, context: object) -> GenerationResult:
+        self.calls += 1
+        sources = context.sources  # type: ignore[attr-defined]
+        if self.mode == "invented":
+            output = GeneratedAnswer(
+                status=AnswerStatus.ANSWERED,
+                claims=[GeneratedClaim(text="Unsafe", source_ids=["src_invented"])],
+                insufficient_reason=None,
+            )
+        elif self.mode == "conflict":
+            output = GeneratedAnswer(
+                status=AnswerStatus.CONFLICTING_SOURCES,
+                claims=[
+                    GeneratedClaim(
+                        text="First policy position.",
+                        source_ids=[sources[0].source_id],
+                    ),
+                    GeneratedClaim(
+                        text="Second policy position.",
+                        source_ids=[sources[1].source_id],
+                    ),
+                ],
+                insufficient_reason=None,
+            )
+        else:
+            text = "Réponse fondée." if "Quel" in query else "Grounded answer."
+            output = GeneratedAnswer(
+                status=AnswerStatus.ANSWERED,
+                claims=[
+                    GeneratedClaim(text=text, source_ids=[sources[0].source_id])
+                ],
+                insufficient_reason=None,
+            )
+        return GenerationResult(
+            answer=output,
+            configured_model="fake-answer",
+            actual_model="fake-answer-v1",
+            usage=GenerationUsage(20, 10, 30),
+        )
 
 
 async def seed_hybrid() -> tuple[TrustedPrincipal, UUID, UUID, UUID, UUID]:
@@ -457,6 +511,94 @@ async def test_metadata_filters_apply_identically_before_all_retrieval_modes() -
                 },
             )
             assert invalid.status_code == 422
+    finally:
+        app.dependency_overrides.clear()
+        await _cleanup(principal.tenant_id, other_tenant_id, principal.user_id)
+
+
+async def test_ask_resolves_citations_and_skips_empty_context() -> None:
+    principal, collection_id, _, other_tenant_id, both_id = await seed_hybrid()
+    embedding = CountingQueryProvider()
+    generator = IntegrationFakeAnswerGenerator()
+
+    async def principal_override() -> TrustedPrincipal:
+        return principal
+
+    app.dependency_overrides[get_trusted_principal] = principal_override
+    app.dependency_overrides[get_embedding_provider] = lambda: embedding
+    app.dependency_overrides[get_reranker_dependency] = IntegrationFakeReranker
+    app.dependency_overrides[get_answer_generator_dependency] = lambda: generator
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            answered = await client.post(
+                f"/collections/{collection_id}/ask",
+                json={
+                    "query": "How does the refund work?",
+                    "retrieval_count": 5,
+                    "filters": {"departments": ["legal"]},
+                },
+            )
+            assert answered.status_code == 200, answered.text
+            body = answered.json()
+            assert body["status"] == "answered"
+            assert body["answer"].endswith("[1]")
+            assert len(body["citations"]) == 1
+            citation = body["citations"][0]
+            assert citation["document_id"] == str(both_id)
+            assert citation["document_version_id"] == str(both_id)
+            assert citation["page_number"] == 1
+            assert citation["section_path"] == "Enterprise Refund Policy"
+            assert citation["start_offset"] == 0
+            assert citation["end_offset"] == len(citation["source_excerpt"])
+            assert "storage_key" not in citation
+            assert body["usage"]["actual_model"] == "fake-answer-v1"
+
+            empty = await client.post(
+                f"/collections/{collection_id}/ask",
+                json={
+                    "query": "Question with no filtered documents",
+                    "filters": {"tags_all": ["does-not-exist"]},
+                },
+            )
+            assert empty.status_code == 200
+            assert empty.json()["status"] == "insufficient_context"
+            assert empty.json()["citations"] == []
+            assert generator.calls == 1
+    finally:
+        app.dependency_overrides.clear()
+        await _cleanup(principal.tenant_id, other_tenant_id, principal.user_id)
+
+
+async def test_ask_rejects_invented_sources_and_preserves_404() -> None:
+    principal, collection_id, _, other_tenant_id, _ = await seed_hybrid()
+    generator = IntegrationFakeAnswerGenerator("invented")
+
+    async def principal_override() -> TrustedPrincipal:
+        return principal
+
+    app.dependency_overrides[get_trusted_principal] = principal_override
+    app.dependency_overrides[get_embedding_provider] = CountingQueryProvider
+    app.dependency_overrides[get_reranker_dependency] = IntegrationFakeReranker
+    app.dependency_overrides[get_answer_generator_dependency] = lambda: generator
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            invalid = await client.post(
+                f"/collections/{collection_id}/ask",
+                json={"query": "refund", "retrieval_count": 3},
+            )
+            assert invalid.status_code == 503
+            assert invalid.json() == {
+                "detail": "Grounded answer could not be generated"
+            }
+            unauthorized = await client.post(
+                f"/collections/{uuid4()}/ask",
+                json={"query": "refund", "retrieval_count": 3},
+            )
+            assert unauthorized.status_code == 404
     finally:
         app.dependency_overrides.clear()
         await _cleanup(principal.tenant_id, other_tenant_id, principal.user_id)

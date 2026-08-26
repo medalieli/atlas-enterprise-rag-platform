@@ -27,6 +27,7 @@ class RetrievalCandidate:
     start_offset: int
     end_offset: int
     score: float
+    source_unit_id: UUID | None = None
     content_type: str = "application/octet-stream"
     document_created_at: datetime | None = None
     document_metadata: dict[str, object] | None = None
@@ -61,6 +62,7 @@ def _candidate(
         content_type=content_type,
         document_created_at=document_created_at,
         document_metadata=document_metadata,
+        source_unit_id=chunk.source_unit_id,
         content=chunk.content,
         page_number=chunk.page_number,
         section_path=chunk.section,

@@ -1,6 +1,6 @@
 # Project Roadmap
 
-Statuses: **Milestones 1–7 — completed.** Milestones 8–15 — pending.
+Statuses: **Milestones 1–9 — completed.** Milestones 10–15 — pending.
 
 ## 1. Repository foundation — Completed
 
@@ -50,7 +50,7 @@ Statuses: **Milestones 1–7 — completed.** Milestones 8–15 — pending.
 
 **Acceptance criteria:** Reranking is configurable and observable; allowed filters are validated server-side; authorization constraints cannot be overridden; tests cover ranking, invalid filters, and empty results.
 
-## 9. Answer generation and validated citations — Pending
+## 9. Answer generation and validated citations — Complete
 
 **Goal:** Generate evidence-bound structured answers and expose only citations verified by the server.
 

@@ -1,8 +1,8 @@
 # Production RAG Knowledge Assistant
 
-Milestone 8 adds validated document metadata filters and a reproducible local
-cross-encoder reranker over bounded hybrid candidates. Answer generation,
-authentication, conversation memory, and a frontend remain deferred.
+Milestone 9 adds grounded structured answer generation and server-validated
+citations over bounded reranked context. Authentication, conversation memory, and a
+frontend remain deferred.
 
 ## Prerequisites
 
@@ -44,6 +44,7 @@ Warning: `docker compose down -v` permanently deletes the local PostgreSQL volum
 - Keyword retrieval: `POST /collections/{collection_id}/keyword-search`
 - Hybrid retrieval: `POST /collections/{collection_id}/hybrid-search`
 - Reranked retrieval: `POST /collections/{collection_id}/reranked-search`
+- Grounded answers: `POST /collections/{collection_id}/ask`
 
 If `API_PORT` is changed, replace `8000` in these URLs with that port.
 
@@ -96,6 +97,24 @@ score interpretation, operational migration tradeoffs, and deferred functionalit
 The [Milestone 8 filtering and reranking guide](docs/RERANKING.md) documents upload
 metadata, shared filter semantics, indexed PostgreSQL predicates, bounded local
 cross-encoder inference, score interpretation, and failure behavior.
+
+The [Milestone 9 answer and citation guide](docs/ANSWERS.md) documents bounded
+context construction, the grounding prompt, the Responses API configuration,
+strict output validation, trusted citation resolution, privacy, and safe failures.
+
+Example grounded request:
+
+```json
+{
+  "query": "How long do enterprise customers have to request a refund?",
+  "retrieval_count": 8,
+  "filters": {"departments": ["legal"], "document_types": ["policy"]}
+}
+```
+
+The response status is `answered`, `insufficient_context`, or
+`conflicting_sources`. Factual claims contain numeric markers matching citations
+whose document and source-location fields were resolved by the server.
 
 ## Troubleshooting
 

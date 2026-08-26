@@ -159,7 +159,7 @@ def get_reranker_dependency() -> RerankerProvider:
         raise HTTPException(status_code=503, detail="Reranker unavailable") from exc
 
 
-async def _authorize_collection(
+async def authorize_collection(
     session: AsyncSession,
     principal: TrustedPrincipal,
     collection_id: UUID,
@@ -320,7 +320,7 @@ async def semantic_search(
     provider: Annotated[EmbeddingProvider, Depends(get_embedding_provider)],
 ) -> SemanticSearchResponse:
     started = perf_counter()
-    await _authorize_collection(session, principal, collection_id)
+    await authorize_collection(session, principal, collection_id)
     vector = await _embed_query(provider, request.query)
     rows = await semantic_candidates(
         session,
@@ -348,7 +348,7 @@ async def keyword_search(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> KeywordSearchResponse:
     started = perf_counter()
-    await _authorize_collection(session, principal, collection_id)
+    await authorize_collection(session, principal, collection_id)
     rows = await keyword_candidates(
         session,
         principal.tenant_id,
@@ -375,7 +375,7 @@ async def hybrid_search(
     provider: Annotated[EmbeddingProvider, Depends(get_embedding_provider)],
 ) -> HybridSearchResponse:
     started = perf_counter()
-    await _authorize_collection(session, principal, collection_id)
+    await authorize_collection(session, principal, collection_id)
     vector = await _embed_query(provider, request.query)
     depth = candidate_depth(request.top_k)
     semantic = await semantic_candidates(
@@ -429,7 +429,7 @@ async def reranked_search(
             detail="top_k exceeds the configured reranker candidate limit",
         )
     started = perf_counter()
-    await _authorize_collection(session, principal, collection_id)
+    await authorize_collection(session, principal, collection_id)
     vector = await _embed_query(embedding_provider, request.query)
     pool_size = settings.reranker_candidate_limit
     depth = candidate_depth(pool_size)

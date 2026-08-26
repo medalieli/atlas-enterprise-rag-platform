@@ -40,6 +40,18 @@ class Settings(BaseSettings):
     reranker_max_length: int = Field(default=512, ge=32, le=1024)
     reranker_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
     reranker_max_concurrency: int = Field(default=2, ge=1, le=8)
+    answer_model: str = "gpt-5.6-terra"
+    answer_reasoning_effort: str = "low"
+    answer_verbosity: str = "medium"
+    answer_max_context_chunks: int = Field(default=8, ge=1, le=20)
+    answer_max_context_tokens: int = Field(default=12_000, ge=256, le=100_000)
+    answer_max_context_chars: int = Field(default=48_000, ge=1_024, le=400_000)
+    answer_max_output_tokens: int = Field(default=2_000, ge=128, le=16_000)
+    answer_provider_timeout_seconds: float = Field(default=45.0, gt=0, le=300)
+    answer_provider_max_retries: int = Field(default=1, ge=0, le=1)
+    answer_max_concurrency: int = Field(default=2, ge=1, le=8)
+    answer_max_claims: int = Field(default=12, ge=1, le=30)
+    answer_max_citations_per_claim: int = Field(default=5, ge=1, le=10)
     redis_url: str = "redis://localhost:6379/0"
     document_storage_path: str = "./data/documents"
     max_upload_bytes: int = 20 * 1024 * 1024
