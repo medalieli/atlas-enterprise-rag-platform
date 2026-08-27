@@ -1,6 +1,6 @@
 # Project Roadmap
 
-Statuses: **Milestones 1–10 — completed.** Milestones 11–15 — pending.
+Statuses: **Milestones 1–13 — completed.** Milestones 14–15 — pending.
 
 ## 1. Repository foundation — Completed
 
@@ -74,7 +74,7 @@ Statuses: **Milestones 1–10 — completed.** Milestones 11–15 — pending.
 
 **Acceptance criteria:** Version changes are traceable; deletion removes or makes all derived data inaccessible per policy; reindexing is idempotent and recoverable; stale versions do not appear in retrieval.
 
-## 13. Next.js frontend and PDF citation viewer — Pending
+## 13. Next.js frontend and PDF citation viewer — Complete
 
 **Goal:** Provide a usable interface for authentication, collections, ingestion, chat, and source verification.
 

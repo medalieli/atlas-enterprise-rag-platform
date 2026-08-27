@@ -1,5 +1,6 @@
 import hashlib
 import json
+from datetime import datetime
 from pathlib import PurePath
 from typing import Annotated
 from uuid import UUID, uuid4
@@ -14,6 +15,7 @@ from fastapi import (
     UploadFile,
     status,
 )
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -72,6 +74,15 @@ class DocumentInfo(BaseModel):
     status: str
     active_version_id: UUID | None
     deleted: bool
+
+
+class DocumentListItem(DocumentInfo):
+    filename: str | None
+    content_type: str | None
+    active_version_number: int | None
+    active_generation_id: UUID | None
+    created_at: datetime
+    updated_at: datetime
 
 
 class GenerationInfo(BaseModel):
@@ -509,6 +520,56 @@ async def delete_document(
 
 
 @router.get(
+    "/collections/{collection_id}/documents",
+    response_model=list[DocumentListItem],
+)
+async def list_documents(
+    collection_id: UUID,
+    principal: Annotated[TrustedPrincipal, Depends(get_trusted_principal)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> list[DocumentListItem]:
+    authorized = await session.scalar(
+        select(Membership.role)
+        .join(Collection, Collection.tenant_id == Membership.tenant_id)
+        .where(
+            Collection.id == collection_id,
+            Membership.user_id == principal.user_id,
+            Membership.enabled.is_(True),
+        )
+    )
+    if authorized is None:
+        raise HTTPException(status_code=404, detail="Collection not found")
+    if not has_permission(authorized, Permission.READ):
+        raise HTTPException(status_code=403, detail="Permission denied")
+    rows = (
+        await session.execute(
+            select(Document, DocumentVersion)
+            .outerjoin(
+                DocumentVersion, DocumentVersion.id == Document.active_version_id
+            )
+            .where(Document.collection_id == collection_id)
+            .order_by(Document.created_at.desc(), Document.id.desc())
+        )
+    ).all()
+    return [
+        DocumentListItem(
+            id=document.id,
+            collection_id=document.collection_id,
+            status=document.status.value,
+            active_version_id=document.active_version_id,
+            deleted=document.status == DocumentStatus.DELETED,
+            filename=version.filename if version else None,
+            content_type=version.content_type if version else None,
+            active_version_number=version.version_number if version else None,
+            active_generation_id=version.active_generation_id if version else None,
+            created_at=document.created_at,
+            updated_at=document.updated_at,
+        )
+        for document, version in rows
+    ]
+
+
+@router.get(
     "/collections/{collection_id}/documents/{document_id}",
     response_model=DocumentInfo,
 )
@@ -645,3 +706,44 @@ async def get_version(
             for g in generations
         ],
     }
+
+
+@router.get(
+    "/collections/{collection_id}/documents/{document_id}/versions/{version_id}/source",
+    response_class=FileResponse,
+)
+async def get_version_source(
+    collection_id: UUID,
+    document_id: UUID,
+    version_id: UUID,
+    principal: Annotated[TrustedPrincipal, Depends(get_trusted_principal)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> FileResponse:
+    document, role = await _document_and_role(
+        session, principal, collection_id, document_id
+    )
+    if not has_permission(role, Permission.READ):
+        raise HTTPException(status_code=403, detail="Permission denied")
+    version = await session.scalar(
+        select(DocumentVersion).where(
+            DocumentVersion.id == version_id,
+            DocumentVersion.tenant_id == document.tenant_id,
+            DocumentVersion.document_id == document.id,
+        )
+    )
+    if version is None or document.status in {
+        DocumentStatus.DELETING,
+        DocumentStatus.DELETED,
+    }:
+        raise HTTPException(status_code=404, detail="Document source not found")
+    storage = LocalDocumentStorage(get_settings().document_storage_path)
+    source = storage.path_for_validation(version.storage_key)
+    if not source.is_file():
+        raise HTTPException(status_code=404, detail="Document source not found")
+    return FileResponse(
+        source,
+        media_type=version.content_type,
+        filename=version.filename,
+        content_disposition_type="inline",
+        headers={"Cache-Control": "private, no-store"},
+    )

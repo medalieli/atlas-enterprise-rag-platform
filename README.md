@@ -1,5 +1,10 @@
 # Production RAG Knowledge Assistant
 
+The Milestone 13 Next.js workspace, OAuth/OIDC Backend-for-Frontend setup, role
+behavior and frontend commands are documented in
+[`docs/FRONTEND.md`](docs/FRONTEND.md). The browser application runs at
+<http://localhost:3000> in Docker Compose.
+
 Document replacement, immutable source versions, generation-based reindexing, and
 asynchronous hard deletion are described in
 [`docs/DOCUMENT_LIFECYCLE.md`](docs/DOCUMENT_LIFECYCLE.md).
@@ -15,9 +20,10 @@ GET    /collections/{collection_id}/documents/{document_id}/versions
 GET    /collections/{collection_id}/documents/{document_id}/versions/{version_id}
 ```
 
-Milestone 10 adds external OAuth/OIDC access-token validation, internal principals,
-enabled tenant memberships, centralized role permissions and collection management.
-Conversation memory and a frontend remain deferred.
+Milestones 10–13 add external OAuth/OIDC access-token validation, internal principals,
+tenant-scoped conversations and document lifecycle management, plus the authenticated
+Next.js frontend. Milestone 14 evaluation/observability and Milestone 15 deployment
+hardening remain explicitly deferred.
 
 ## Prerequisites
 
@@ -63,6 +69,8 @@ Warning: `docker compose down -v` permanently deletes the local PostgreSQL volum
 - Conversations: `POST /collections/{collection_id}/conversations`
 - Conversation turns: `POST /collections/{collection_id}/conversations/{conversation_id}/messages`
 - Current identity: `GET /auth/me`
+- Authorized document list: `GET /collections/{collection_id}/documents`
+- Authorized immutable source: `GET /collections/{collection_id}/documents/{document_id}/versions/{version_id}/source`
 - List collections: `GET /collections?tenant_id=<TENANT_UUID>`
 - Create collection: `POST /collections`
 

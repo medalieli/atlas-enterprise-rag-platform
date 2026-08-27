@@ -32,6 +32,7 @@ from app.db.models import (
     ConversationMessageRole,
     ConversationTurn,
     ConversationTurnStatus,
+    DocumentVersion,
 )
 from app.db.session import get_session
 from app.embeddings import EmbeddingProvider
@@ -66,12 +67,30 @@ class ConversationListResponse(BaseModel):
     next_cursor: UUID | None
 
 
+class PersistedCitationResponse(BaseModel):
+    citation_number: int
+    source_id: str
+    source_status: str
+    document_id: UUID | None
+    document_version_id: UUID | None
+    generation_id: UUID | None
+    document_name: str | None
+    content_type: str | None
+    page_number: int | None
+    section_path: str | None
+    start_offset: int
+    end_offset: int
+    metadata: dict[str, object]
+    source_excerpt: str | None
+
+
 class MessageResponse(BaseModel):
     id: UUID
     sequence_number: int
     role: ConversationMessageRole
     content: str
     created_at: datetime
+    citations: list[PersistedCitationResponse]
 
 
 class MessageListResponse(BaseModel):
@@ -269,6 +288,43 @@ async def list_messages(
     )
     more = len(rows) > limit
     rows = rows[:limit]
+    citations_by_message: dict[UUID, list[PersistedCitationResponse]] = {}
+    if rows:
+        citation_rows = (
+            await session.execute(
+                select(ConversationCitation, DocumentVersion)
+                .outerjoin(
+                    DocumentVersion,
+                    DocumentVersion.id == ConversationCitation.document_version_id,
+                )
+                .where(
+                    ConversationCitation.assistant_message_id.in_([x.id for x in rows])
+                )
+                .order_by(
+                    ConversationCitation.assistant_message_id,
+                    ConversationCitation.citation_order,
+                )
+            )
+        ).all()
+        for citation, version in citation_rows:
+            citations_by_message.setdefault(citation.assistant_message_id, []).append(
+                PersistedCitationResponse(
+                    citation_number=citation.citation_order,
+                    source_id=citation.source_id,
+                    source_status=citation.source_status,
+                    document_id=citation.document_id,
+                    document_version_id=citation.document_version_id,
+                    generation_id=citation.generation_id,
+                    document_name=version.filename if version else None,
+                    content_type=version.content_type if version else None,
+                    page_number=citation.page_number,
+                    section_path=citation.section_path,
+                    start_offset=citation.start_offset,
+                    end_offset=citation.end_offset,
+                    metadata=citation.document_metadata,
+                    source_excerpt=citation.exact_excerpt,
+                )
+            )
     return MessageListResponse(
         messages=[
             MessageResponse(
@@ -277,6 +333,7 @@ async def list_messages(
                 role=x.role,
                 content=x.content,
                 created_at=x.created_at,
+                citations=citations_by_message.get(x.id, []),
             )
             for x in rows
         ],
