@@ -33,6 +33,7 @@ async def embed_pending_document(
                 .order_by(DocumentChunk.chunk_index)
             )
         ).all()
+
     def fingerprint_for(chunk: DocumentChunk) -> str:
         embedding_input = build_embedding_input(chunk.content, chunk.section)
         return embedding_fingerprint(

@@ -36,6 +36,26 @@ class DocumentStatus(StrEnum):
     PROCESSING = "processing"
     AVAILABLE = "available"
     FAILED = "failed"
+    DELETING = "deleting"
+    DELETED = "deleted"
+
+
+class DocumentVersionStatus(StrEnum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    READY = "ready"
+    ACTIVE = "active"
+    SUPERSEDED = "superseded"
+    FAILED = "failed"
+
+
+class IndexGenerationStatus(StrEnum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    READY = "ready"
+    ACTIVE = "active"
+    SUPERSEDED = "superseded"
+    FAILED = "failed"
 
 
 class ProcessingJobStatus(StrEnum):
@@ -141,12 +161,7 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ),
         UniqueConstraint("tenant_id", "id", name="uq_documents_tenant_id_id"),
         UniqueConstraint(
-            "tenant_id", "storage_key", name="uq_documents_tenant_storage_key"
-        ),
-        CheckConstraint("size_bytes >= 0", name="ck_documents_size_nonnegative"),
-        CheckConstraint(
-            "checksum_sha256 ~ '^[0-9a-f]{64}$'",
-            name="ck_documents_checksum_sha256",
+            "tenant_id", "collection_id", "id", name="uq_documents_tenant_collection_id"
         ),
         CheckConstraint(
             "jsonb_typeof(metadata) = 'object'",
@@ -199,11 +214,20 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     collection_id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True), nullable=False
     )
-    filename: Mapped[str] = mapped_column(String(512), nullable=False)
-    storage_key: Mapped[str] = mapped_column(String(1024), nullable=False)
-    content_type: Mapped[str] = mapped_column(String(255), nullable=False)
-    size_bytes: Mapped[int] = mapped_column(nullable=False)
-    checksum_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    active_version_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("document_versions.id", ondelete="RESTRICT"),
+    )
+    next_version_number: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=2, server_default="2"
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Deprecated Milestone 3 snapshot fields retained only for downgrade.
+    filename: Mapped[str | None] = mapped_column(String(512))
+    storage_key: Mapped[str | None] = mapped_column(String(1024))
+    content_type: Mapped[str | None] = mapped_column(String(255))
+    size_bytes: Mapped[int | None] = mapped_column()
+    checksum_sha256: Mapped[str | None] = mapped_column(String(64))
     status: Mapped[DocumentStatus] = mapped_column(
         Enum(
             DocumentStatus,
@@ -215,6 +239,61 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         server_default=DocumentStatus.PENDING.value,
     )
     error_message: Mapped[str | None] = mapped_column(Text)
+    document_metadata: Mapped[dict[str, object] | None] = mapped_column(
+        "metadata",
+        JSONB,
+        nullable=True,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+
+
+class DocumentVersion(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "document_versions"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "collection_id", "document_id"],
+            ["documents.tenant_id", "documents.collection_id", "documents.id"],
+            name="fk_document_versions_tenant_document",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "tenant_id", "document_id", "id", name="uq_document_versions_identity"
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "document_id",
+            "version_number",
+            name="uq_document_versions_order",
+        ),
+        UniqueConstraint(
+            "tenant_id", "storage_key", name="uq_document_versions_storage_key"
+        ),
+        CheckConstraint("version_number >= 1", name="ck_document_versions_order"),
+        CheckConstraint("size_bytes >= 0", name="ck_document_versions_size"),
+        CheckConstraint(
+            "checksum_sha256 ~ '^[0-9a-f]{64}$'",
+            name="ck_document_versions_checksum",
+        ),
+        Index("ix_document_versions_document", "tenant_id", "document_id"),
+        Index("ix_document_versions_status", "tenant_id", "status"),
+    )
+
+    tenant_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=False
+    )
+    collection_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=False
+    )
+    document_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=False
+    )
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    storage_key: Mapped[str] = mapped_column(String(1024), nullable=False)
+    checksum_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    filename: Mapped[str] = mapped_column(String(512), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(255), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
     document_metadata: Mapped[dict[str, object]] = mapped_column(
         "metadata",
         JSONB,
@@ -222,6 +301,98 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         default=dict,
         server_default=text("'{}'::jsonb"),
     )
+    requested_by_user_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    status: Mapped[DocumentVersionStatus] = mapped_column(
+        Enum(
+            DocumentVersionStatus,
+            name="document_version_status",
+            values_callable=lambda e: [v.value for v in e],
+        ),
+        nullable=False,
+        default=DocumentVersionStatus.PENDING,
+        server_default=DocumentVersionStatus.PENDING.value,
+    )
+    active_generation_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("document_index_generations.id", ondelete="RESTRICT"),
+    )
+    ready_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    failure_category: Mapped[str | None] = mapped_column(String(100))
+
+
+class DocumentIndexGeneration(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "document_index_generations"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "document_id", "document_version_id"],
+            [
+                "document_versions.tenant_id",
+                "document_versions.document_id",
+                "document_versions.id",
+            ],
+            name="fk_generations_tenant_version",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "document_id",
+            "document_version_id",
+            "id",
+            name="uq_generations_identity",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "document_version_id",
+            "generation_number",
+            name="uq_generations_order",
+        ),
+        CheckConstraint("generation_number >= 1", name="ck_generations_order"),
+        Index("ix_generations_version", "tenant_id", "document_version_id"),
+        Index("ix_generations_status", "tenant_id", "status"),
+    )
+    tenant_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=False
+    )
+    document_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=False
+    )
+    document_version_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=False
+    )
+    generation_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[IndexGenerationStatus] = mapped_column(
+        Enum(
+            IndexGenerationStatus,
+            name="index_generation_status",
+            values_callable=lambda e: [v.value for v in e],
+        ),
+        nullable=False,
+        default=IndexGenerationStatus.PENDING,
+        server_default=IndexGenerationStatus.PENDING.value,
+    )
+    parser_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    cleaner_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    chunker_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    embedding_input_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    embedding_provider: Mapped[str] = mapped_column(String(100), nullable=False)
+    embedding_model: Mapped[str] = mapped_column(String(200), nullable=False)
+    embedding_dimensions: Mapped[int] = mapped_column(Integer, nullable=False)
+    text_search_configuration: Mapped[str] = mapped_column(String(100), nullable=False)
+    configuration_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    processing_job_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
+    requested_by_user_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    ready_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    failure_category: Mapped[str | None] = mapped_column(String(100))
 
 
 class DocumentChunk(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -234,10 +405,29 @@ class DocumentChunk(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             ondelete="CASCADE",
         ),
         ForeignKeyConstraint(
-            ["tenant_id", "document_id", "source_unit_id"],
+            ["tenant_id", "document_id", "document_version_id", "generation_id"],
+            [
+                "document_index_generations.tenant_id",
+                "document_index_generations.document_id",
+                "document_index_generations.document_version_id",
+                "document_index_generations.id",
+            ],
+            name="fk_chunks_generation",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            [
+                "tenant_id",
+                "document_id",
+                "document_version_id",
+                "generation_id",
+                "source_unit_id",
+            ],
             [
                 "document_source_units.tenant_id",
                 "document_source_units.document_id",
+                "document_source_units.document_version_id",
+                "document_source_units.generation_id",
                 "document_source_units.id",
             ],
             name="fk_document_chunks_tenant_source_unit",
@@ -246,8 +436,17 @@ class DocumentChunk(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         UniqueConstraint(
             "tenant_id",
             "document_id",
+            "generation_id",
             "chunk_index",
-            name="uq_document_chunks_tenant_document_index",
+            name="uq_document_chunks_generation_index",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "document_id",
+            "document_version_id",
+            "generation_id",
+            "id",
+            name="uq_document_chunks_lifecycle_identity",
         ),
         CheckConstraint(
             "chunk_index >= 0", name="ck_document_chunks_index_nonnegative"
@@ -303,6 +502,12 @@ class DocumentChunk(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     document_id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True), nullable=False
     )
+    document_version_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=False
+    )
+    generation_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=False
+    )
     source_unit_id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True), nullable=False
     )
@@ -342,16 +547,36 @@ class DocumentSourceUnit(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "document_source_units"
     __table_args__ = (
         ForeignKeyConstraint(
+            ["tenant_id", "document_id", "document_version_id", "generation_id"],
+            [
+                "document_index_generations.tenant_id",
+                "document_index_generations.document_id",
+                "document_index_generations.document_version_id",
+                "document_index_generations.id",
+            ],
+            name="fk_source_units_generation",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
             ["tenant_id", "document_id"],
             ["documents.tenant_id", "documents.id"],
             name="fk_source_units_tenant_document",
             ondelete="CASCADE",
         ),
         UniqueConstraint(
-            "tenant_id", "document_id", "id", name="uq_source_units_tenant_document_id"
+            "tenant_id",
+            "document_id",
+            "document_version_id",
+            "generation_id",
+            "id",
+            name="uq_source_units_lifecycle_identity",
         ),
         UniqueConstraint(
-            "tenant_id", "document_id", "unit_index", name="uq_source_units_index"
+            "tenant_id",
+            "document_id",
+            "generation_id",
+            "unit_index",
+            name="uq_source_units_generation_index",
         ),
         CheckConstraint("unit_index >= 0", name="ck_source_units_index_nonnegative"),
         Index("ix_source_units_tenant_document", "tenant_id", "document_id"),
@@ -361,6 +586,12 @@ class DocumentSourceUnit(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         PostgreSQLUUID(as_uuid=True), nullable=False
     )
     document_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=False
+    )
+    document_version_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=False
+    )
+    generation_id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True), nullable=False
     )
     unit_index: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -383,12 +614,50 @@ class ProcessingJob(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             name="fk_processing_jobs_tenant_document",
             ondelete="CASCADE",
         ),
+        ForeignKeyConstraint(
+            ["tenant_id", "document_id", "document_version_id"],
+            [
+                "document_versions.tenant_id",
+                "document_versions.document_id",
+                "document_versions.id",
+            ],
+            name="fk_processing_jobs_version",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "document_id", "document_version_id", "generation_id"],
+            [
+                "document_index_generations.tenant_id",
+                "document_index_generations.document_id",
+                "document_index_generations.document_version_id",
+                "document_index_generations.id",
+            ],
+            name="fk_processing_jobs_generation",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "document_id",
+            "operation",
+            "idempotency_key",
+            name="uq_processing_jobs_idempotency",
+        ),
         CheckConstraint(
             "attempt_count >= 0", name="ck_processing_jobs_attempt_nonnegative"
         ),
         Index("ix_processing_jobs_tenant_status", "tenant_id", "status"),
         Index("ix_processing_jobs_tenant_document", "tenant_id", "document_id"),
         Index("ix_processing_jobs_requested_by", "requested_by_user_id"),
+        Index(
+            "uq_processing_jobs_active_lifecycle",
+            "tenant_id",
+            "document_id",
+            unique=True,
+            postgresql_where=text(
+                "operation IN ('replacement_ingestion', 'reindex') "
+                "AND status IN ('queued', 'running', 'retrying')"
+            ),
+        ),
     )
 
     tenant_id: Mapped[UUID] = mapped_column(
@@ -397,6 +666,13 @@ class ProcessingJob(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     document_id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True), nullable=False
     )
+    document_version_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True)
+    )
+    generation_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
+    idempotency_key: Mapped[str | None] = mapped_column(String(128))
+    request_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    failure_category: Mapped[str | None] = mapped_column(String(100))
     requested_by_user_id: Mapped[UUID | None] = mapped_column(
         PostgreSQLUUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
@@ -588,6 +864,34 @@ class ConversationCitation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             name="uq_conversation_citation_order",
         ),
         CheckConstraint("citation_order >= 1", name="ck_conversation_citation_order"),
+        CheckConstraint(
+            "(source_status = 'available' AND tenant_id IS NOT NULL AND "
+            "chunk_id IS NOT NULL AND document_id IS NOT NULL AND "
+            "document_version_id IS NOT NULL AND generation_id IS NOT NULL AND "
+            "exact_excerpt IS NOT NULL) OR (source_status = 'deleted' AND "
+            "tenant_id IS NULL AND chunk_id IS NULL AND document_id IS NULL AND "
+            "document_version_id IS NULL AND generation_id IS NULL AND "
+            "exact_excerpt IS NULL)",
+            name="ck_citations_source_state",
+        ),
+        ForeignKeyConstraint(
+            [
+                "tenant_id",
+                "document_id",
+                "document_version_id",
+                "generation_id",
+                "chunk_id",
+            ],
+            [
+                "document_chunks.tenant_id",
+                "document_chunks.document_id",
+                "document_chunks.document_version_id",
+                "document_chunks.generation_id",
+                "document_chunks.id",
+            ],
+            name="fk_citations_chunk_lifecycle",
+            ondelete="RESTRICT",
+        ),
         Index("ix_conversation_citations_message", "assistant_message_id"),
     )
 
@@ -598,19 +902,26 @@ class ConversationCitation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     citation_order: Mapped[int] = mapped_column(Integer, nullable=False)
     source_id: Mapped[str] = mapped_column(String(64), nullable=False)
-    chunk_id: Mapped[UUID] = mapped_column(
+    source_status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="available", server_default="available"
+    )
+    tenant_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
+    chunk_id: Mapped[UUID | None] = mapped_column(
         PostgreSQLUUID(as_uuid=True),
         ForeignKey("document_chunks.id", ondelete="RESTRICT"),
-        nullable=False,
+        nullable=True,
     )
-    document_id: Mapped[UUID] = mapped_column(
+    document_id: Mapped[UUID | None] = mapped_column(
         PostgreSQLUUID(as_uuid=True),
         ForeignKey("documents.id", ondelete="RESTRICT"),
-        nullable=False,
+        nullable=True,
     )
-    document_version_id: Mapped[UUID] = mapped_column(
-        PostgreSQLUUID(as_uuid=True), nullable=False
+    document_version_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("document_versions.id", ondelete="RESTRICT"),
+        nullable=True,
     )
+    generation_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
     page_number: Mapped[int | None] = mapped_column(Integer)
     section_path: Mapped[str | None] = mapped_column(String(1000))
     start_offset: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -618,7 +929,7 @@ class ConversationCitation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     document_metadata: Mapped[dict[str, object]] = mapped_column(
         JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
     )
-    exact_excerpt: Mapped[str] = mapped_column(Text, nullable=False)
+    exact_excerpt: Mapped[str | None] = mapped_column(Text)
 
 
 __all__ = [
@@ -631,8 +942,12 @@ __all__ = [
     "ConversationTurnStatus",
     "Document",
     "DocumentChunk",
+    "DocumentIndexGeneration",
     "DocumentStatus",
     "DocumentSourceUnit",
+    "DocumentVersion",
+    "DocumentVersionStatus",
+    "IndexGenerationStatus",
     "Membership",
     "MembershipRole",
     "Organization",

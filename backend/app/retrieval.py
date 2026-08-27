@@ -6,7 +6,15 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
-from app.db.models import Document, DocumentChunk, DocumentStatus
+from app.db.models import (
+    Document,
+    DocumentChunk,
+    DocumentIndexGeneration,
+    DocumentStatus,
+    DocumentVersion,
+    DocumentVersionStatus,
+    IndexGenerationStatus,
+)
 from app.metadata import MetadataFilter, document_filter_predicates
 
 TEXT_SEARCH_CONFIGURATION = "simple"
@@ -27,10 +35,17 @@ class RetrievalCandidate:
     start_offset: int
     end_offset: int
     score: float
+    document_version_id: UUID | None = None
+    generation_id: UUID | None = None
     source_unit_id: UUID | None = None
     content_type: str = "application/octet-stream"
     document_created_at: datetime | None = None
     document_metadata: dict[str, object] | None = None
+
+    def __post_init__(self) -> None:
+        # Compatibility for pre-Milestone-12 isolated unit fixtures only.
+        if self.document_version_id is None:
+            object.__setattr__(self, "document_version_id", self.document_id)
 
 
 @dataclass(frozen=True)
@@ -58,6 +73,8 @@ def _candidate(
     return RetrievalCandidate(
         chunk_id=chunk.id,
         document_id=chunk.document_id,
+        document_version_id=chunk.document_version_id,
+        generation_id=chunk.generation_id,
         document_name=filename,
         content_type=content_type,
         document_created_at=document_created_at,
@@ -86,6 +103,12 @@ async def semantic_candidates(
         DocumentChunk.tenant_id == tenant_id,
         Document.collection_id == collection_id,
         Document.status == DocumentStatus.AVAILABLE,
+        Document.active_version_id == DocumentVersion.id,
+        DocumentVersion.status == DocumentVersionStatus.ACTIVE,
+        DocumentVersion.active_generation_id == DocumentIndexGeneration.id,
+        DocumentIndexGeneration.status == IndexGenerationStatus.ACTIVE,
+        DocumentChunk.document_version_id == DocumentVersion.id,
+        DocumentChunk.generation_id == DocumentIndexGeneration.id,
         DocumentChunk.embedding.is_not(None),
         DocumentChunk.embedding_model == settings.embedding_model,
         DocumentChunk.embedding_dimensions == settings.embedding_dimensions,
@@ -93,10 +116,10 @@ async def semantic_candidates(
     query = (
         select(
             DocumentChunk,
-            Document.filename,
-            Document.content_type,
-            Document.created_at,
-            Document.document_metadata,
+            DocumentVersion.filename,
+            DocumentVersion.content_type,
+            DocumentVersion.created_at,
+            DocumentVersion.document_metadata,
             distance,
         )
         .join(
@@ -104,7 +127,15 @@ async def semantic_candidates(
             (Document.id == DocumentChunk.document_id)
             & (Document.tenant_id == DocumentChunk.tenant_id),
         )
-        .where(*scope_filters, *document_filter_predicates(filters))
+        .join(DocumentVersion, DocumentVersion.id == Document.active_version_id)
+        .join(
+            DocumentIndexGeneration,
+            DocumentIndexGeneration.id == DocumentVersion.active_generation_id,
+        )
+        .where(
+            *scope_filters,
+            *document_filter_predicates(filters, DocumentVersion),
+        )
         .order_by(distance, DocumentChunk.id)
         .limit(limit)
     )
@@ -117,7 +148,15 @@ async def semantic_candidates(
             (Document.id == DocumentChunk.document_id)
             & (Document.tenant_id == DocumentChunk.tenant_id),
         )
-        .where(*scope_filters, *document_filter_predicates(filters))
+        .join(DocumentVersion, DocumentVersion.id == Document.active_version_id)
+        .join(
+            DocumentIndexGeneration,
+            DocumentIndexGeneration.id == DocumentVersion.active_generation_id,
+        )
+        .where(
+            *scope_filters,
+            *document_filter_predicates(filters, DocumentVersion),
+        )
     )
     expected = min(limit, scoped_count or 0)
     if len(rows) < expected:
@@ -159,10 +198,10 @@ async def keyword_candidates(
     query = (
         select(
             DocumentChunk,
-            Document.filename,
-            Document.content_type,
-            Document.created_at,
-            Document.document_metadata,
+            DocumentVersion.filename,
+            DocumentVersion.content_type,
+            DocumentVersion.created_at,
+            DocumentVersion.document_metadata,
             keyword_score,
         )
         .join(
@@ -170,11 +209,20 @@ async def keyword_candidates(
             (Document.id == DocumentChunk.document_id)
             & (Document.tenant_id == DocumentChunk.tenant_id),
         )
+        .join(DocumentVersion, DocumentVersion.id == Document.active_version_id)
+        .join(
+            DocumentIndexGeneration,
+            DocumentIndexGeneration.id == DocumentVersion.active_generation_id,
+        )
         .where(
             DocumentChunk.tenant_id == tenant_id,
             Document.collection_id == collection_id,
             Document.status == DocumentStatus.AVAILABLE,
-            *document_filter_predicates(filters),
+            DocumentVersion.status == DocumentVersionStatus.ACTIVE,
+            DocumentIndexGeneration.status == IndexGenerationStatus.ACTIVE,
+            DocumentChunk.document_version_id == DocumentVersion.id,
+            DocumentChunk.generation_id == DocumentIndexGeneration.id,
+            *document_filter_predicates(filters, DocumentVersion),
             func.numnode(tsquery) > 0,
             DocumentChunk.search_vector.op("@@")(tsquery),
         )

@@ -10,6 +10,7 @@ from app.api.conversations import router as conversations_router
 from app.api.documents import router as documents_router
 from app.api.health import router as health_router
 from app.api.identity import router as identity_router
+from app.api.lifecycle import router as lifecycle_router
 from app.api.search import router as search_router
 from app.core.config import get_settings
 from app.db.session import dispose_engine
@@ -29,6 +30,7 @@ app.include_router(answers_router)
 app.include_router(conversations_router)
 app.include_router(health_router)
 app.include_router(identity_router)
+app.include_router(lifecycle_router)
 app.include_router(documents_router)
 app.include_router(search_router)
 

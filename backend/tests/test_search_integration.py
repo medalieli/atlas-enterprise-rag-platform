@@ -11,10 +11,8 @@ from app.api.search import get_embedding_provider
 from app.auth import TrustedPrincipal, get_trusted_principal
 from app.db.models import (
     Collection,
-    Document,
     DocumentChunk,
     DocumentSourceUnit,
-    DocumentStatus,
     Membership,
     Organization,
     User,
@@ -22,6 +20,7 @@ from app.db.models import (
 from app.db.session import session_factory
 from app.embeddings import EMBEDDING_INPUT_VERSION, embedding_fingerprint
 from app.main import app
+from tests.fixture_builders import add_active_lifecycle
 
 pytestmark = [
     pytest.mark.asyncio,
@@ -80,25 +79,20 @@ async def seed_search() -> tuple[TrustedPrincipal, UUID, UUID, UUID]:
             (other_tenant_id, other_collection_id, "forbidden"),
         ):
             document_id, unit_id = uuid4(), uuid4()
-            session.add(
-                Document(
-                    id=document_id,
-                    tenant_id=owner,
-                    collection_id=collection,
-                    filename=f"{label}.pdf",
-                    storage_key=f"{owner}/{document_id}.pdf",
-                    content_type="application/pdf",
-                    size_bytes=10,
-                    checksum_sha256="1" * 64,
-                    status=DocumentStatus.AVAILABLE,
-                )
+            version_id, generation_id = await add_active_lifecycle(
+                session,
+                owner,
+                collection,
+                document_id,
+                filename=f"{label}.pdf",
             )
-            await session.flush()
             session.add(
                 DocumentSourceUnit(
                     id=unit_id,
                     tenant_id=owner,
                     document_id=document_id,
+                    document_version_id=version_id,
+                    generation_id=generation_id,
                     unit_index=0,
                     source_type="pdf",
                     page_number=1,
@@ -112,6 +106,8 @@ async def seed_search() -> tuple[TrustedPrincipal, UUID, UUID, UUID]:
                 DocumentChunk(
                     tenant_id=owner,
                     document_id=document_id,
+                    document_version_id=version_id,
+                    generation_id=generation_id,
                     source_unit_id=unit_id,
                     chunk_index=0,
                     content=label,

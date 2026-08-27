@@ -410,6 +410,8 @@ def trusted_row(item: CitableSource) -> tuple[object, object, object]:
         SimpleNamespace(
             id=item.chunk_id,
             document_id=item.document_id,
+            document_version_id=item.document_version_id,
+            generation_id=item.generation_id,
             source_unit_id=item.source_unit_id,
             content=item.content,
             page_number=item.page_number,
@@ -475,6 +477,8 @@ async def test_validator_rejects_cross_scope_and_changed_version_relationship() 
     changed = SimpleNamespace(
         id=item.chunk_id,
         document_id=uuid4(),
+        document_version_id=item.document_version_id,
+        generation_id=item.generation_id,
         source_unit_id=item.source_unit_id,
         content=item.content,
         page_number=item.page_number,

@@ -15,7 +15,7 @@ from pydantic import (
 from sqlalchemy import ColumnElement
 from sqlalchemy.dialects import postgresql
 
-from app.db.models import Document
+from app.db.models import Document, DocumentVersion
 
 MAX_METADATA_JSON_BYTES = 4096
 MAX_FILTER_JSON_BYTES = 8192
@@ -188,51 +188,51 @@ def public_document_metadata(
 
 def document_filter_predicates(
     filters: MetadataFilter | None,
+    source: type[Document] | type[DocumentVersion] = Document,
 ) -> tuple[ColumnElement[bool], ...]:
     if filters is None:
         return ()
     predicates: list[ColumnElement[bool]] = []
     if filters.document_ids:
-        predicates.append(Document.id.in_(filters.document_ids))
+        identity = source.document_id if source is DocumentVersion else source.id
+        predicates.append(identity.in_(filters.document_ids))
     if filters.content_types:
-        predicates.append(Document.content_type.in_(filters.content_types))
+        predicates.append(source.content_type.in_(filters.content_types))
     if filters.filenames:
-        predicates.append(Document.filename.in_(filters.filenames))
+        predicates.append(source.filename.in_(filters.filenames))
     if filters.created_from:
-        predicates.append(Document.created_at >= filters.created_from)
+        predicates.append(source.created_at >= filters.created_from)
     if filters.created_to:
-        predicates.append(Document.created_at <= filters.created_to)
+        predicates.append(source.created_at <= filters.created_to)
     if filters.tags_any:
         predicates.append(
-            Document.document_metadata["tags"].op("?|")(
+            source.document_metadata["tags"].op("?|")(
                 postgresql.array(filters.tags_any)
             )
         )
     if filters.tags_all:
         predicates.append(
-            Document.document_metadata["tags"].op("?&")(
+            source.document_metadata["tags"].op("?&")(
                 postgresql.array(filters.tags_all)
             )
         )
     if filters.departments:
         predicates.append(
-            Document.document_metadata["department"]
-            .as_string()
-            .in_(filters.departments)
+            source.document_metadata["department"].as_string().in_(filters.departments)
         )
     if filters.document_types:
         predicates.append(
-            Document.document_metadata["document_type"]
+            source.document_metadata["document_type"]
             .as_string()
             .in_([value.value for value in filters.document_types])
         )
     if filters.languages:
         predicates.append(
-            Document.document_metadata["language"].as_string().in_(filters.languages)
+            source.document_metadata["language"].as_string().in_(filters.languages)
         )
     # Normalized ISO dates sort chronologically as text and keep the matching
     # expression index immutable regardless of the database DateStyle.
-    effective_date = Document.document_metadata["effective_date"].as_string()
+    effective_date = source.document_metadata["effective_date"].as_string()
     if filters.effective_from:
         predicates.append(effective_date >= filters.effective_from.isoformat())
     if filters.effective_to:

@@ -72,6 +72,7 @@ class AnswerCitation(BaseModel):
     chunk_id: UUID
     document_id: UUID
     document_version_id: UUID
+    generation_id: UUID
     document_name: str
     content_type: str
     page_number: int | None
@@ -264,6 +265,7 @@ async def ask(
                 chunk_id=citation.source.chunk_id,
                 document_id=citation.source.document_id,
                 document_version_id=citation.source.document_version_id,
+                generation_id=citation.source.generation_id,
                 document_name=citation.source.document_name,
                 content_type=citation.source.content_type,
                 page_number=citation.source.page_number,

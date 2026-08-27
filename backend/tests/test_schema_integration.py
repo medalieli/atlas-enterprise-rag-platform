@@ -10,7 +10,9 @@ from app.db.models import (
     Conversation,
     Document,
     DocumentChunk,
+    DocumentIndexGeneration,
     DocumentSourceUnit,
+    DocumentVersion,
     Membership,
     Organization,
     User,
@@ -26,7 +28,7 @@ pytestmark = [
     ),
 ]
 
-REVISION = "b2c3d4e5f6a7"
+REVISION = "c3d4e5f6a7b8"
 
 
 async def test_conversation_history_constraints_and_indexes_exist() -> None:
@@ -200,6 +202,7 @@ async def test_tenant_and_uniqueness_constraints_are_enforced() -> None:
     collection_b_id = uuid4()
     document_a_id = uuid4()
     source_unit_id = uuid4()
+    generation_id = uuid4()
 
     async with engine.connect() as connection:
         transaction = await connection.begin()
@@ -243,10 +246,44 @@ async def test_tenant_and_uniqueness_constraints_are_enforced() -> None:
                 )
             )
             await connection.execute(
+                insert(DocumentVersion).values(
+                    id=document_a_id,
+                    tenant_id=tenant_a_id,
+                    collection_id=collection_a_id,
+                    document_id=document_a_id,
+                    version_number=1,
+                    storage_key=f"documents/{document_a_id}",
+                    checksum_sha256="0" * 64,
+                    filename="guide.pdf",
+                    content_type="application/pdf",
+                    size_bytes=100,
+                )
+            )
+            await connection.execute(
+                insert(DocumentIndexGeneration).values(
+                    id=generation_id,
+                    tenant_id=tenant_a_id,
+                    document_id=document_a_id,
+                    document_version_id=document_a_id,
+                    generation_number=1,
+                    parser_version="pypdf-6-v1",
+                    cleaner_version="clean-v1",
+                    chunker_version="chunk-v1",
+                    embedding_input_version="embedding-input-v1",
+                    embedding_provider="fake",
+                    embedding_model="text-embedding-3-small",
+                    embedding_dimensions=1536,
+                    text_search_configuration="simple",
+                    configuration_fingerprint="0" * 64,
+                )
+            )
+            await connection.execute(
                 insert(DocumentSourceUnit).values(
                     id=source_unit_id,
                     tenant_id=tenant_a_id,
                     document_id=document_a_id,
+                    document_version_id=document_a_id,
+                    generation_id=generation_id,
                     unit_index=0,
                     source_type="pdf",
                     page_number=1,
@@ -258,6 +295,8 @@ async def test_tenant_and_uniqueness_constraints_are_enforced() -> None:
                 insert(DocumentChunk).values(
                     tenant_id=tenant_a_id,
                     document_id=document_a_id,
+                    document_version_id=document_a_id,
+                    generation_id=generation_id,
                     source_unit_id=source_unit_id,
                     chunk_index=0,
                     content="First chunk",
@@ -297,6 +336,8 @@ async def test_tenant_and_uniqueness_constraints_are_enforced() -> None:
                         insert(DocumentChunk).values(
                             tenant_id=tenant_a_id,
                             document_id=document_a_id,
+                            document_version_id=document_a_id,
+                            generation_id=generation_id,
                             source_unit_id=source_unit_id,
                             chunk_index=0,
                             content="Duplicate position",

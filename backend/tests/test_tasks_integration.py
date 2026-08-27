@@ -11,7 +11,9 @@ from app.db.models import (
     Collection,
     Document,
     DocumentChunk,
+    DocumentIndexGeneration,
     DocumentSourceUnit,
+    DocumentVersion,
     Organization,
     ProcessingJob,
     ProcessingJobStatus,
@@ -58,7 +60,9 @@ class QuotaEmbeddingProvider(FakeEmbeddingProvider):
 async def make_job(
     storage_root: str, *, create_file: bool, content: bytes | None = None
 ) -> tuple[object, ...]:
-    tenant_id, collection_id, document_id, job_id = (uuid4() for _ in range(4))
+    tenant_id, collection_id, document_id, generation_id, job_id = (
+        uuid4() for _ in range(5)
+    )
     content = content or pdf_bytes(["Integration document with traceable text."])
     checksum = hashlib.sha256(content).hexdigest()
     key = f"{tenant_id.hex}/{document_id.hex}/original.pdf"
@@ -76,11 +80,41 @@ async def make_job(
                 id=document_id,
                 tenant_id=tenant_id,
                 collection_id=collection_id,
-                filename="test.pdf",
+            )
+        )
+        await session.flush()
+        session.add(
+            DocumentVersion(
+                id=document_id,
+                tenant_id=tenant_id,
+                collection_id=collection_id,
+                document_id=document_id,
+                version_number=1,
                 storage_key=key,
+                checksum_sha256=checksum,
+                filename="test.pdf",
                 content_type="application/pdf",
                 size_bytes=len(content),
-                checksum_sha256=checksum,
+            )
+        )
+        await session.flush()
+        session.add(
+            DocumentIndexGeneration(
+                id=generation_id,
+                tenant_id=tenant_id,
+                document_id=document_id,
+                document_version_id=document_id,
+                generation_number=1,
+                parser_version="pypdf-6-v1",
+                cleaner_version="clean-v1",
+                chunker_version="chunk-v1",
+                embedding_input_version="embedding-input-v1",
+                embedding_provider="fake",
+                embedding_model="text-embedding-3-small",
+                embedding_dimensions=1536,
+                text_search_configuration="simple",
+                configuration_fingerprint="1" * 64,
+                processing_job_id=job_id,
             )
         )
         await session.flush()
@@ -89,7 +123,9 @@ async def make_job(
                 id=job_id,
                 tenant_id=tenant_id,
                 document_id=document_id,
-                operation="verify_original",
+                document_version_id=document_id,
+                generation_id=generation_id,
+                operation="initial_ingestion",
             )
         )
     return tenant_id, document_id, job_id

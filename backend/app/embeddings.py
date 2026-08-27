@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
+from time import perf_counter
 from typing import Protocol
 
 import tiktoken
@@ -23,7 +24,7 @@ from openai import (
 from app.core.config import Settings
 
 EMBEDDING_INPUT_VERSION = "embedding-input-v1"
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("uvicorn.error")
 
 PERMANENT_QUOTA_CODES = frozenset(
     {
@@ -210,6 +211,7 @@ class OpenAIEmbeddingProvider:
         )
 
     async def _request(self, texts: Sequence[str]) -> list[list[float]]:
+        started = perf_counter()
         try:
             response = await self.client.embeddings.create(
                 input=list(texts),
@@ -240,6 +242,16 @@ class OpenAIEmbeddingProvider:
         indexes = [item.index for item in data]
         if indexes != list(range(len(texts))) or len(data) != len(texts):
             raise PermanentEmbeddingError("Embedding response indexes are invalid")
+        usage = getattr(response, "usage", None)
+        logger.info(
+            "Embedding provider completed model=%s inputs=%s "
+            "input_tokens=%s total_tokens=%s latency_ms=%.3f",
+            self.settings.embedding_model,
+            len(texts),
+            getattr(usage, "prompt_tokens", 0),
+            getattr(usage, "total_tokens", 0),
+            (perf_counter() - started) * 1_000,
+        )
         return [
             validate_vector(item.embedding, self.settings.embedding_dimensions)
             for item in data

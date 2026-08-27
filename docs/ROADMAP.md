@@ -68,7 +68,7 @@ Statuses: **Milestones 1–10 — completed.** Milestones 11–15 — pending.
 
 **Acceptance criteria:** Conversations are tenant-scoped; the original and rewritten questions are stored; rewriting is testable and configurable; each turn rechecks current authorization.
 
-## 12. Deletion, versioning and reindexing — Pending
+## 12. Deletion, versioning and reindexing — Complete
 
 **Goal:** Manage the complete lifecycle of source objects and derived data safely.
 

@@ -68,9 +68,7 @@ class LocalCrossEncoderReranker:
             processor_kwargs={"use_fast": True},
         )
 
-    def score(
-        self, query: str, candidates: Sequence[RerankInput]
-    ) -> list[RerankScore]:
+    def score(self, query: str, candidates: Sequence[RerankInput]) -> list[RerankScore]:
         pairs = [(query, candidate.passage) for candidate in candidates]
         values = self.model.predict(
             pairs,
@@ -88,9 +86,7 @@ class LocalCrossEncoderReranker:
 class DeterministicFakeReranker:
     """Explicit test-only provider for isolated authentication smoke tests."""
 
-    def score(
-        self, query: str, candidates: Sequence[RerankInput]
-    ) -> list[RerankScore]:
+    def score(self, query: str, candidates: Sequence[RerankInput]) -> list[RerankScore]:
         return [RerankScore(candidate.candidate_id, 0.0) for candidate in candidates]
 
 

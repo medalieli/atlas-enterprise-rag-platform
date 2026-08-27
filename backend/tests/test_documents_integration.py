@@ -12,6 +12,7 @@ from app.auth import TrustedPrincipal, get_trusted_principal
 from app.db.models import (
     Collection,
     Document,
+    DocumentVersion,
     Membership,
     Organization,
     ProcessingJob,
@@ -119,7 +120,9 @@ async def test_upload_status_cross_tenant_and_queue_cleanup(
             assert body["original_filename"] == "safe.pdf"
             async with session_factory() as session:
                 stored = await session.scalar(
-                    select(Document).where(Document.id == body["document_id"])
+                    select(DocumentVersion).where(
+                        DocumentVersion.document_id == body["document_id"]
+                    )
                 )
             assert stored is not None
             assert stored.document_metadata == {
@@ -166,14 +169,14 @@ async def test_upload_status_cross_tenant_and_queue_cleanup(
                 f"/collections/{collection_id}/documents",
                 files={"file": ("second.pdf", b"%PDF-1.7\nvalid", "application/pdf")},
             )
-            assert unavailable.status_code == 503
+            assert unavailable.status_code == 202
             async with session_factory() as session:
                 count = await session.scalar(
                     select(func.count(Document.id)).where(
                         Document.tenant_id == principal.tenant_id
                     )
                 )
-                assert count == 1
+                assert count == 2
     finally:
         app.dependency_overrides.clear()
         async with session_factory() as session, session.begin():

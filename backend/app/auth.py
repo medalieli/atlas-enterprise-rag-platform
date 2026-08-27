@@ -32,14 +32,24 @@ bearer_scheme = HTTPBearer(
 class Permission(StrEnum):
     READ = "tenant:read"
     UPLOAD = "document:upload"
+    REINDEX = "document:reindex"
+    DELETE_DOCUMENT = "document:delete"
     MANAGE_COLLECTIONS = "collection:manage"
 
 
 ROLE_PERMISSIONS: dict[MembershipRole, frozenset[Permission]] = {
     MembershipRole.VIEWER: frozenset({Permission.READ}),
-    MembershipRole.EDITOR: frozenset({Permission.READ, Permission.UPLOAD}),
+    MembershipRole.EDITOR: frozenset(
+        {Permission.READ, Permission.UPLOAD, Permission.REINDEX}
+    ),
     MembershipRole.ADMIN: frozenset(
-        {Permission.READ, Permission.UPLOAD, Permission.MANAGE_COLLECTIONS}
+        {
+            Permission.READ,
+            Permission.UPLOAD,
+            Permission.REINDEX,
+            Permission.DELETE_DOCUMENT,
+            Permission.MANAGE_COLLECTIONS,
+        }
     ),
 }
 

@@ -459,6 +459,8 @@ async def create_message(
                         chunk_id=citation.chunk_id,
                         document_id=citation.document_id,
                         document_version_id=citation.document_version_id,
+                        tenant_id=tenant_id,
+                        generation_id=citation.generation_id,
                         page_number=citation.page_number,
                         section_path=citation.section_path,
                         start_offset=citation.start_offset,

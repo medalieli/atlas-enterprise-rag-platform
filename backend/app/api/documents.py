@@ -4,19 +4,27 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel, ValidationError
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import Permission, TrustedPrincipal, get_trusted_principal, has_permission
 from app.core.config import get_settings
-from app.db.models import Collection, Document, Membership, ProcessingJob
+from app.db.models import (
+    Collection,
+    Document,
+    DocumentIndexGeneration,
+    DocumentVersion,
+    Membership,
+    ProcessingJob,
+)
 from app.db.session import get_session
+from app.lifecycle import index_configuration
 from app.metadata import MAX_METADATA_JSON_BYTES, DocumentMetadataInput
 from app.storage import (
     LocalDocumentStorage,
     UploadValidationError,
-    storage_key,
     validate_stored_file,
+    version_storage_key,
 )
 from app.tasks import verify_original_task
 
@@ -86,8 +94,15 @@ async def upload_document(
     filename = PurePath(file.filename or "").name[:512]
     extension = PurePath(filename).suffix.lower()
     settings = get_settings()
-    document_id, job_id = uuid4(), uuid4()
-    key = storage_key(tenant_id, document_id, extension)
+    document_id, version_id, generation_id, job_id = (
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+    )
+    # Preserve the compatibility contract for newly-created version 1 as well.
+    version_id = document_id
+    key = version_storage_key(tenant_id, document_id, version_id, extension)
     storage = LocalDocumentStorage(settings.document_storage_path)
     try:
         stored = await storage.store(file, key, settings.max_upload_bytes)
@@ -101,21 +116,49 @@ async def upload_document(
             id=document_id,
             tenant_id=tenant_id,
             collection_id=collection_id,
-            filename=filename,
+        )
+        configuration = index_configuration(file.content_type or "", settings)
+        version = DocumentVersion(
+            id=version_id,
+            tenant_id=tenant_id,
+            collection_id=collection_id,
+            document_id=document_id,
+            version_number=1,
             storage_key=key,
+            checksum_sha256=stored.checksum_sha256,
+            filename=filename,
             content_type=file.content_type or "",
             size_bytes=stored.size_bytes,
-            checksum_sha256=stored.checksum_sha256,
             document_metadata=document_metadata.to_storage(),
+            requested_by_user_id=principal.user_id,
+        )
+        generation = DocumentIndexGeneration(
+            id=generation_id,
+            tenant_id=tenant_id,
+            document_id=document_id,
+            document_version_id=version_id,
+            generation_number=1,
+            requested_by_user_id=principal.user_id,
+            **configuration.__dict__,
+            configuration_fingerprint=configuration.fingerprint,
         )
         job = ProcessingJob(
             id=job_id,
             tenant_id=tenant_id,
             document_id=document_id,
+            document_version_id=version_id,
+            generation_id=generation_id,
             requested_by_user_id=principal.user_id,
-            operation="verify_original",
+            operation="initial_ingestion",
         )
-        session.add_all([document, job])
+        generation.processing_job_id = job_id
+        session.add(document)
+        await session.flush()
+        session.add(version)
+        await session.flush()
+        session.add(generation)
+        await session.flush()
+        session.add(job)
         await session.commit()
     except UploadValidationError as exc:
         await storage.delete(key)
@@ -132,13 +175,9 @@ async def upload_document(
             args=[str(tenant_id), str(document_id), str(job_id)]
         )
     except Exception as exc:
-        await session.execute(delete(ProcessingJob).where(ProcessingJob.id == job_id))
-        await session.execute(delete(Document).where(Document.id == document_id))
-        await session.commit()
-        await storage.delete(key)
-        raise HTTPException(
-            status_code=503, detail="Document queue is unavailable"
-        ) from exc
+        # The committed job is durable intent. Reconciliation can publish it
+        # after a transient broker outage without losing the stored source.
+        _ = exc
 
     return UploadResponse(
         document_id=document_id,

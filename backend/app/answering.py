@@ -26,7 +26,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
-from app.db.models import Document, DocumentChunk, DocumentSourceUnit, DocumentStatus
+from app.db.models import (
+    Document,
+    DocumentChunk,
+    DocumentIndexGeneration,
+    DocumentSourceUnit,
+    DocumentStatus,
+    DocumentVersion,
+)
 from app.embeddings import normalize_rate_limit_error
 from app.metadata import PublicDocumentMetadata, public_document_metadata
 from app.reranking import RerankedCandidate
@@ -94,6 +101,11 @@ class CitableSource:
     section_path: str | None
     start_offset: int
     end_offset: int
+    generation_id: UUID | None = None
+
+    def __post_init__(self) -> None:
+        if self.generation_id is None:
+            object.__setattr__(self, "generation_id", self.chunk_id)
 
 
 @dataclass(frozen=True)
@@ -161,7 +173,7 @@ def _source_block(source: CitableSource) -> str:
         else f"section={source.section_path or 'unavailable'}"
     )
     return (
-        f"<source id=\"{source.source_id}\">\n"
+        f'<source id="{source.source_id}">\n'
         f"title={source.document_name}\n{location}\n"
         f"<content>\n{source.content}\n</content>\n</source>"
     )
@@ -189,7 +201,7 @@ def build_answer_context(
             collection_id=collection_id,
             chunk_id=candidate.chunk_id,
             document_id=candidate.document_id,
-            document_version_id=candidate.document_id,
+            document_version_id=candidate.document_version_id,
             source_unit_id=candidate.source_unit_id,
             document_name=candidate.document_name,
             content_type=candidate.content_type,
@@ -199,6 +211,7 @@ def build_answer_context(
             section_path=candidate.section_path,
             start_offset=candidate.start_offset,
             end_offset=candidate.end_offset,
+            generation_id=candidate.generation_id,
         )
         block = _source_block(source)
         block_tokens = len(encoding.encode(block))
@@ -323,9 +336,7 @@ class OpenAIAnswerGenerator:
             usage=token_usage,
         )
 
-    async def generate(
-        self, question: str, context: AnswerContext
-    ) -> GenerationResult:
+    async def generate(self, question: str, context: AnswerContext) -> GenerationResult:
         for attempt in range(self.settings.answer_provider_max_retries + 1):
             try:
                 return await self._request(question, context)
@@ -456,11 +467,18 @@ async def validate_and_resolve_answer(
                 & (DocumentSourceUnit.document_id == DocumentChunk.document_id)
                 & (DocumentSourceUnit.tenant_id == DocumentChunk.tenant_id),
             )
+            .join(DocumentVersion, DocumentVersion.id == Document.active_version_id)
+            .join(
+                DocumentIndexGeneration,
+                DocumentIndexGeneration.id == DocumentVersion.active_generation_id,
+            )
             .where(
                 DocumentChunk.id.in_(chunk_ids),
                 DocumentChunk.tenant_id == tenant_id,
                 Document.collection_id == collection_id,
                 Document.status == DocumentStatus.AVAILABLE,
+                DocumentChunk.document_version_id == DocumentVersion.id,
+                DocumentChunk.generation_id == DocumentIndexGeneration.id,
             )
         )
     ).all()
@@ -473,7 +491,9 @@ async def validate_and_resolve_answer(
             raise AnswerValidationError("Cited source scope mismatch")
         chunk, document, unit = trusted[source.chunk_id]
         if (
-            chunk.document_id != source.document_version_id
+            chunk.document_id != source.document_id
+            or chunk.document_version_id != source.document_version_id
+            or chunk.generation_id != source.generation_id
             or chunk.source_unit_id != source.source_unit_id
             or document.id != source.document_id
             or unit.document_id != source.document_id
@@ -490,8 +510,7 @@ async def validate_and_resolve_answer(
         markers = "".join(f"[{numbers[source_id]}]" for source_id in claim.source_ids)
         rendered_claims.append(f"{claim.text} {markers}")
     citations = tuple(
-        ResolvedCitation(numbers[source_id], by_id[source_id])
-        for source_id in used_ids
+        ResolvedCitation(numbers[source_id], by_id[source_id]) for source_id in used_ids
     )
     return ValidatedAnswer(
         status=output.status,

@@ -19,10 +19,8 @@ from app.api.search import get_embedding_provider, get_reranker_dependency
 from app.auth import TrustedPrincipal, get_trusted_principal
 from app.db.models import (
     Collection,
-    Document,
     DocumentChunk,
     DocumentSourceUnit,
-    DocumentStatus,
     Membership,
     Organization,
     User,
@@ -35,6 +33,7 @@ from app.embeddings import (
 )
 from app.main import app
 from app.reranking import RerankInput, RerankScore
+from tests.fixture_builders import add_active_lifecycle
 
 pytestmark = [
     pytest.mark.asyncio,
@@ -76,26 +75,23 @@ async def _add_chunk(
     document_id, unit_id = uuid4(), uuid4()
     content_hash = hashlib.sha256(content.encode()).hexdigest()
     async with session_factory() as session, session.begin():
-        session.add(
-            Document(
-                id=document_id,
-                tenant_id=tenant_id,
-                collection_id=collection_id,
-                filename=f"{label}.pdf",
-                storage_key=f"{tenant_id}/{document_id}.pdf",
-                content_type="application/pdf",
-                size_bytes=len(content),
-                checksum_sha256=hashlib.sha256(label.encode()).hexdigest(),
-                status=DocumentStatus.AVAILABLE,
-                document_metadata=metadata or {},
-            )
+        version_id, generation_id = await add_active_lifecycle(
+            session,
+            tenant_id,
+            collection_id,
+            document_id,
+            filename=f"{label}.pdf",
+            size_bytes=len(content),
+            checksum=hashlib.sha256(label.encode()).hexdigest(),
+            metadata=metadata,
         )
-        await session.flush()
         session.add(
             DocumentSourceUnit(
                 id=unit_id,
                 tenant_id=tenant_id,
                 document_id=document_id,
+                document_version_id=version_id,
+                generation_id=generation_id,
                 unit_index=0,
                 source_type="pdf",
                 page_number=1,
@@ -108,6 +104,8 @@ async def _add_chunk(
             DocumentChunk(
                 tenant_id=tenant_id,
                 document_id=document_id,
+                document_version_id=version_id,
+                generation_id=generation_id,
                 source_unit_id=unit_id,
                 chunk_index=0,
                 content=content,

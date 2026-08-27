@@ -1,5 +1,20 @@
 # Production RAG Knowledge Assistant
 
+Document replacement, immutable source versions, generation-based reindexing, and
+asynchronous hard deletion are described in
+[`docs/DOCUMENT_LIFECYCLE.md`](docs/DOCUMENT_LIFECYCLE.md).
+
+Lifecycle requests use authenticated collection scope and idempotency keys:
+
+```text
+POST   /collections/{collection_id}/documents/{document_id}/versions
+POST   /collections/{collection_id}/documents/{document_id}/reindex
+DELETE /collections/{collection_id}/documents/{document_id}
+GET    /collections/{collection_id}/documents/{document_id}
+GET    /collections/{collection_id}/documents/{document_id}/versions
+GET    /collections/{collection_id}/documents/{document_id}/versions/{version_id}
+```
+
 Milestone 10 adds external OAuth/OIDC access-token validation, internal principals,
 enabled tenant memberships, centralized role permissions and collection management.
 Conversation memory and a frontend remain deferred.

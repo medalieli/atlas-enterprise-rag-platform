@@ -1,6 +1,86 @@
 import io
+from datetime import UTC, datetime
+from uuid import UUID, uuid4
 
 from docx import Document
+
+from app.db.models import (
+    Document as StoredDocument,
+)
+from app.db.models import (
+    DocumentIndexGeneration,
+    DocumentStatus,
+    DocumentVersion,
+    DocumentVersionStatus,
+    IndexGenerationStatus,
+)
+
+
+async def add_active_lifecycle(
+    session: object,
+    tenant_id: UUID,
+    collection_id: UUID,
+    document_id: UUID,
+    *,
+    filename: str,
+    content_type: str = "application/pdf",
+    size_bytes: int = 10,
+    checksum: str = "1" * 64,
+    metadata: dict[str, object] | None = None,
+) -> tuple[UUID, UUID]:
+    generation_id = uuid4()
+    now = datetime.now(UTC)
+    document = StoredDocument(
+        id=document_id,
+        tenant_id=tenant_id,
+        collection_id=collection_id,
+        status=DocumentStatus.AVAILABLE,
+    )
+    version = DocumentVersion(
+        id=document_id,
+        tenant_id=tenant_id,
+        collection_id=collection_id,
+        document_id=document_id,
+        version_number=1,
+        storage_key=f"{tenant_id.hex}/{document_id.hex}/versions/{document_id.hex}/original.pdf",
+        checksum_sha256=checksum,
+        filename=filename,
+        content_type=content_type,
+        size_bytes=size_bytes,
+        document_metadata=metadata or {},
+        status=DocumentVersionStatus.ACTIVE,
+        ready_at=now,
+        activated_at=now,
+    )
+    generation = DocumentIndexGeneration(
+        id=generation_id,
+        tenant_id=tenant_id,
+        document_id=document_id,
+        document_version_id=document_id,
+        generation_number=1,
+        status=IndexGenerationStatus.ACTIVE,
+        parser_version="pypdf-6-v1",
+        cleaner_version="clean-v1",
+        chunker_version="chunk-v1",
+        embedding_input_version="embedding-input-v1",
+        embedding_provider="fake",
+        embedding_model="text-embedding-3-small",
+        embedding_dimensions=1536,
+        text_search_configuration="simple",
+        configuration_fingerprint="1" * 64,
+        ready_at=now,
+        activated_at=now,
+    )
+    session.add(document)  # type: ignore[attr-defined]
+    await session.flush()  # type: ignore[attr-defined]
+    session.add(version)  # type: ignore[attr-defined]
+    await session.flush()  # type: ignore[attr-defined]
+    session.add(generation)  # type: ignore[attr-defined]
+    await session.flush()  # type: ignore[attr-defined]
+    document.active_version_id = version.id
+    version.active_generation_id = generation.id
+    await session.flush()  # type: ignore[attr-defined]
+    return version.id, generation.id
 
 
 def pdf_bytes(pages: list[str]) -> bytes:

@@ -28,6 +28,7 @@ class DocumentStorage(Protocol):
     ) -> StoredUpload: ...
     async def delete(self, key: str) -> None: ...
     async def verify(self, key: str, checksum: str) -> bool: ...
+    async def exists(self, key: str) -> bool: ...
 
 
 class LocalDocumentStorage:
@@ -84,6 +85,9 @@ class LocalDocumentStorage:
                 digest.update(chunk)
         return digest.hexdigest() == checksum
 
+    async def exists(self, key: str) -> bool:
+        return self._path(key).is_file()
+
     def path_for_validation(self, key: str) -> Path:
         return self._path(key)
 
@@ -124,3 +128,13 @@ def validate_stored_file(
 
 def storage_key(tenant_id: UUID, document_id: UUID, extension: str) -> str:
     return f"{tenant_id.hex}/{document_id.hex}/original{extension}"
+
+
+def version_storage_key(
+    tenant_id: UUID, document_id: UUID, version_id: UUID, extension: str
+) -> str:
+    """Return a server-controlled immutable source-object key."""
+    return (
+        f"{tenant_id.hex}/{document_id.hex}/versions/"
+        f"{version_id.hex}/original{extension}"
+    )
