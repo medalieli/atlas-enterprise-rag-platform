@@ -25,7 +25,9 @@ from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
 
 class MembershipRole(StrEnum):
-    MEMBER = "member"
+    VIEWER = "viewer"
+    MEMBER = "viewer"
+    EDITOR = "editor"
     ADMIN = "admin"
 
 
@@ -53,8 +55,17 @@ class Organization(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "users"
+    __table_args__ = (
+        UniqueConstraint("issuer", "subject", name="uq_users_issuer_subject"),
+        Index("ix_users_issuer_subject", "issuer", "subject"),
+    )
 
-    email: Mapped[str] = mapped_column(String(320), nullable=False, unique=True)
+    issuer: Mapped[str] = mapped_column(String(500), nullable=False)
+    subject: Mapped[str] = mapped_column(String(500), nullable=False)
+    enabled: Mapped[bool] = mapped_column(
+        nullable=False, default=True, server_default="true"
+    )
+    email: Mapped[str | None] = mapped_column(String(320), unique=True)
     display_name: Mapped[str | None] = mapped_column(String(200))
 
 
@@ -63,6 +74,7 @@ class Membership(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __table_args__ = (
         UniqueConstraint("tenant_id", "user_id", name="uq_memberships_tenant_user"),
         Index("ix_memberships_user_id", "user_id"),
+        Index("ix_memberships_tenant_enabled", "tenant_id", "enabled"),
     )
 
     tenant_id: Mapped[UUID] = mapped_column(
@@ -82,8 +94,11 @@ class Membership(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             values_callable=lambda enum: [e.value for e in enum],
         ),
         nullable=False,
-        default=MembershipRole.MEMBER,
-        server_default=MembershipRole.MEMBER.value,
+        default=MembershipRole.VIEWER,
+        server_default=MembershipRole.VIEWER.value,
+    )
+    enabled: Mapped[bool] = mapped_column(
+        nullable=False, default=True, server_default="true"
     )
 
 
@@ -362,6 +377,7 @@ class ProcessingJob(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ),
         Index("ix_processing_jobs_tenant_status", "tenant_id", "status"),
         Index("ix_processing_jobs_tenant_document", "tenant_id", "document_id"),
+        Index("ix_processing_jobs_requested_by", "requested_by_user_id"),
     )
 
     tenant_id: Mapped[UUID] = mapped_column(
@@ -369,6 +385,10 @@ class ProcessingJob(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     document_id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True), nullable=False
+    )
+    requested_by_user_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
     )
     operation: Mapped[str] = mapped_column(String(50), nullable=False)
     status: Mapped[ProcessingJobStatus] = mapped_column(

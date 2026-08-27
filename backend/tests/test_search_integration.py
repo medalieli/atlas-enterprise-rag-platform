@@ -54,7 +54,12 @@ async def seed_search() -> tuple[TrustedPrincipal, UUID, UUID, UUID]:
                     name="Other Search Tenant",
                     slug=str(other_tenant_id),
                 ),
-                User(id=user_id, email=f"{user_id}@example.test"),
+                User(
+                    id=user_id,
+                    issuer="https://issuer.test",
+                    subject=str(user_id),
+                    email=f"{user_id}@example.test",
+                ),
             ]
         )
         await session.flush()

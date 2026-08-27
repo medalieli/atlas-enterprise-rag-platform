@@ -54,6 +54,7 @@ def test_scoped_uniqueness_constraints_are_declared() -> None:
         "uq_document_chunks_tenant_document_index",
         "uq_documents_tenant_storage_key",
         "uq_memberships_tenant_user",
+        "uq_users_issuer_subject",
     }
     actual_constraints = {
         constraint.name

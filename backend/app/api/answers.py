@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.answering import (
     AnswerGenerationError,
     AnswerGenerator,
+    AnswerProviderUnavailableError,
     AnswerStatus,
     AnswerValidationError,
     GeneratedAnswer,
@@ -106,13 +107,15 @@ class AskResponse(BaseModel):
     latency: AnswerLatency
 
 
-def get_answer_generator_dependency() -> AnswerGenerator:
+def get_answer_generator_dependency() -> AnswerGenerator | None:
     try:
         return get_answer_generator()
-    except AnswerGenerationError as exc:
-        raise HTTPException(
-            status_code=503, detail="Answer provider unavailable"
-        ) from exc
+    except AnswerGenerationError:
+        return None
+
+
+def _raise_answer_provider_unavailable() -> GenerationResult:
+    raise AnswerProviderUnavailableError("Answer provider unavailable")
 
 
 def _no_context_message(query: str) -> str:
@@ -153,7 +156,7 @@ async def ask(
     ],
     reranker: Annotated[RerankerProvider, Depends(get_reranker_dependency)],
     answer_generator: Annotated[
-        AnswerGenerator, Depends(get_answer_generator_dependency)
+        AnswerGenerator | None, Depends(get_answer_generator_dependency)
     ],
 ) -> AskResponse:
     settings = get_settings()
@@ -163,12 +166,12 @@ async def ask(
             detail="retrieval_count exceeds the reranker candidate limit",
         )
     started = perf_counter()
-    await authorize_collection(session, principal, collection_id)
+    tenant_id = await authorize_collection(session, principal, collection_id)
     vector = await _embed_query(embedding_provider, request.query)
     depth = candidate_depth(settings.reranker_candidate_limit)
     semantic = await semantic_candidates(
         session,
-        principal.tenant_id,
+        tenant_id,
         collection_id,
         vector,
         depth,
@@ -177,7 +180,7 @@ async def ask(
     )
     keyword = await keyword_candidates(
         session,
-        principal.tenant_id,
+        tenant_id,
         collection_id,
         request.query,
         depth,
@@ -197,7 +200,7 @@ async def ask(
     except RerankerError as exc:
         raise HTTPException(status_code=503, detail="Reranker unavailable") from exc
     context = build_answer_context(
-        reranked, principal.tenant_id, collection_id, settings
+        reranked, tenant_id, collection_id, settings
     )
     retrieval_ms = (perf_counter() - started) * 1_000
     generation_started = perf_counter()
@@ -211,20 +214,22 @@ async def ask(
                 context,
                 settings.answer_provider_timeout_seconds,
             )
+            if answer_generator is not None
+            else _raise_answer_provider_unavailable()
         )
         validate_usage(generated.usage)
         validated = await validate_and_resolve_answer(
             session,
             generated.answer,
             context,
-            principal.tenant_id,
+            tenant_id,
             collection_id,
             settings,
         )
     except (AnswerGenerationError, AnswerValidationError) as exc:
         logger.warning(
             "Answer request failed correlation_id=%s category=%s",
-            safe_correlation_id(principal.tenant_id, collection_id),
+            safe_correlation_id(tenant_id, collection_id),
             getattr(exc, "category", type(exc).__name__),
         )
         raise HTTPException(
@@ -283,7 +288,7 @@ async def ask(
         "Answer completed correlation_id=%s model=%s candidates=%s context=%s "
         "citations=%s input_tokens=%s output_tokens=%s retrieval_ms=%.3f "
         "generation_ms=%.3f total_ms=%.3f",
-        safe_correlation_id(principal.tenant_id, collection_id),
+        safe_correlation_id(tenant_id, collection_id),
         generated.actual_model,
         len(fused),
         len(context.sources),

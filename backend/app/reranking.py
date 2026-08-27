@@ -85,9 +85,21 @@ class LocalCrossEncoderReranker:
         ]
 
 
+class DeterministicFakeReranker:
+    """Explicit test-only provider for isolated authentication smoke tests."""
+
+    def score(
+        self, query: str, candidates: Sequence[RerankInput]
+    ) -> list[RerankScore]:
+        return [RerankScore(candidate.candidate_id, 0.0) for candidate in candidates]
+
+
 @lru_cache
 def get_reranker_provider() -> RerankerProvider:
-    return LocalCrossEncoderReranker(get_settings())
+    settings = get_settings()
+    if settings.reranker_provider == "fake":
+        return DeterministicFakeReranker()
+    return LocalCrossEncoderReranker(settings)
 
 
 @lru_cache

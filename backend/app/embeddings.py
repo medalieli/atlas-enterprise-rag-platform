@@ -258,5 +258,25 @@ class OpenAIEmbeddingProvider:
         return (await self._request(batches[0].texts))[0]
 
 
+class DeterministicFakeEmbeddingProvider:
+    """Explicit test-environment provider used by authentication smoke tests."""
+
+    def __init__(self, dimensions: int) -> None:
+        self.dimensions = dimensions
+
+    def _vector(self, text: str) -> list[float]:
+        vector = [0.0] * self.dimensions
+        vector[0] = 1.0 if text else 0.0
+        return vector
+
+    async def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
+        return [self._vector(text) for text in texts]
+
+    async def embed_query(self, text: str) -> list[float]:
+        return self._vector(text)
+
+
 def create_embedding_provider(settings: Settings) -> EmbeddingProvider:
+    if settings.embedding_provider == "fake":
+        return DeterministicFakeEmbeddingProvider(settings.embedding_dimensions)
     return OpenAIEmbeddingProvider(settings)

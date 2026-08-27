@@ -1,8 +1,8 @@
 # Production RAG Knowledge Assistant
 
-Milestone 9 adds grounded structured answer generation and server-validated
-citations over bounded reranked context. Authentication, conversation memory, and a
-frontend remain deferred.
+Milestone 10 adds external OAuth/OIDC access-token validation, internal principals,
+enabled tenant memberships, centralized role permissions and collection management.
+Conversation memory and a frontend remain deferred.
 
 ## Prerequisites
 
@@ -45,6 +45,9 @@ Warning: `docker compose down -v` permanently deletes the local PostgreSQL volum
 - Hybrid retrieval: `POST /collections/{collection_id}/hybrid-search`
 - Reranked retrieval: `POST /collections/{collection_id}/reranked-search`
 - Grounded answers: `POST /collections/{collection_id}/ask`
+- Current identity: `GET /auth/me`
+- List collections: `GET /collections?tenant_id=<TENANT_UUID>`
+- Create collection: `POST /collections`
 
 If `API_PORT` is changed, replace `8000` in these URLs with that port.
 
@@ -115,6 +118,12 @@ Example grounded request:
 The response status is `answered`, `insufficient_context`, or
 `conflicting_sources`. Factual claims contain numeric markers matching citations
 whose document and source-location fields were resolved by the server.
+
+The [Milestone 10 authentication guide](docs/AUTHENTICATION.md) documents external
+issuer/JWKS setup, strict JWT validation, identity provisioning, roles, collection
+management, tenant isolation, key rotation, TLS and revocation limitations. Business
+requests use `Authorization: Bearer <ACCESS_TOKEN>`; the API validates tokens but
+does not issue them.
 
 ## Troubleshooting
 

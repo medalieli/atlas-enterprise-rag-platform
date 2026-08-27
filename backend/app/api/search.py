@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import TrustedPrincipal, get_trusted_principal
+from app.auth import Permission, TrustedPrincipal, get_trusted_principal, has_permission
 from app.core.config import get_settings
 from app.db.models import Collection, Membership
 from app.db.session import get_session
@@ -163,9 +163,10 @@ async def authorize_collection(
     session: AsyncSession,
     principal: TrustedPrincipal,
     collection_id: UUID,
-) -> None:
-    allowed = await session.scalar(
-        select(Collection.id)
+) -> UUID:
+    row = (
+        await session.execute(
+            select(Collection.tenant_id, Membership.role)
         .join(
             Membership,
             (Membership.tenant_id == Collection.tenant_id)
@@ -173,11 +174,16 @@ async def authorize_collection(
         )
         .where(
             Collection.id == collection_id,
-            Collection.tenant_id == principal.tenant_id,
+            Membership.enabled.is_(True),
         )
-    )
-    if allowed is None:
+        )
+    ).one_or_none()
+    if row is None:
         raise HTTPException(status_code=404, detail="Collection not found")
+    tenant_id, role = row
+    if not has_permission(role, Permission.READ):
+        raise HTTPException(status_code=403, detail="Permission denied")
+    return tenant_id
 
 
 async def _embed_query(provider: EmbeddingProvider, query: str) -> list[float]:
@@ -320,11 +326,11 @@ async def semantic_search(
     provider: Annotated[EmbeddingProvider, Depends(get_embedding_provider)],
 ) -> SemanticSearchResponse:
     started = perf_counter()
-    await authorize_collection(session, principal, collection_id)
+    tenant_id = await authorize_collection(session, principal, collection_id)
     vector = await _embed_query(provider, request.query)
     rows = await semantic_candidates(
         session,
-        principal.tenant_id,
+        tenant_id,
         collection_id,
         vector,
         request.top_k,
@@ -348,10 +354,10 @@ async def keyword_search(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> KeywordSearchResponse:
     started = perf_counter()
-    await authorize_collection(session, principal, collection_id)
+    tenant_id = await authorize_collection(session, principal, collection_id)
     rows = await keyword_candidates(
         session,
-        principal.tenant_id,
+        tenant_id,
         collection_id,
         request.query,
         request.top_k,
@@ -375,12 +381,12 @@ async def hybrid_search(
     provider: Annotated[EmbeddingProvider, Depends(get_embedding_provider)],
 ) -> HybridSearchResponse:
     started = perf_counter()
-    await authorize_collection(session, principal, collection_id)
+    tenant_id = await authorize_collection(session, principal, collection_id)
     vector = await _embed_query(provider, request.query)
     depth = candidate_depth(request.top_k)
     semantic = await semantic_candidates(
         session,
-        principal.tenant_id,
+        tenant_id,
         collection_id,
         vector,
         depth,
@@ -389,7 +395,7 @@ async def hybrid_search(
     )
     keyword = await keyword_candidates(
         session,
-        principal.tenant_id,
+        tenant_id,
         collection_id,
         request.query,
         depth,
@@ -429,13 +435,13 @@ async def reranked_search(
             detail="top_k exceeds the configured reranker candidate limit",
         )
     started = perf_counter()
-    await authorize_collection(session, principal, collection_id)
+    tenant_id = await authorize_collection(session, principal, collection_id)
     vector = await _embed_query(embedding_provider, request.query)
     pool_size = settings.reranker_candidate_limit
     depth = candidate_depth(pool_size)
     semantic = await semantic_candidates(
         session,
-        principal.tenant_id,
+        tenant_id,
         collection_id,
         vector,
         depth,
@@ -444,7 +450,7 @@ async def reranked_search(
     )
     keyword = await keyword_candidates(
         session,
-        principal.tenant_id,
+        tenant_id,
         collection_id,
         request.query,
         depth,

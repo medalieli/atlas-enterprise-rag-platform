@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     embedding_max_input_tokens: int = Field(default=8191, ge=1, le=8192)
     embedding_max_batch_tokens: int = Field(default=300_000, ge=1, le=300_000)
     reranker_model_id: str = "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
+    reranker_provider: str = "local"
     reranker_model_revision: str = "1427fd652930e4ba29e8149678df786c240d8825"
     reranker_model_path: str = "/models/reranker"
     reranker_candidate_limit: int = Field(default=30, ge=1, le=200)
@@ -52,6 +53,20 @@ class Settings(BaseSettings):
     answer_max_concurrency: int = Field(default=2, ge=1, le=8)
     answer_max_claims: int = Field(default=12, ge=1, le=30)
     answer_max_citations_per_claim: int = Field(default=5, ge=1, le=10)
+    auth_enabled: bool = False
+    auth_issuer: str | None = None
+    auth_audience: str | None = None
+    auth_jwks_url: str | None = None
+    auth_allowed_algorithm: str = "RS256"
+    auth_expected_token_type: str = "at+jwt"
+    auth_required_scopes: str = "rag:access"
+    auth_clock_skew_seconds: int = Field(default=30, ge=0, le=300)
+    auth_max_token_bytes: int = Field(default=8_192, ge=512, le=32_768)
+    auth_max_token_age_seconds: int = Field(default=3_600, ge=60, le=86_400)
+    auth_jwks_timeout_seconds: float = Field(default=3.0, gt=0, le=15)
+    auth_jwks_cache_seconds: int = Field(default=300, ge=30, le=86_400)
+    auth_jwks_max_bytes: int = Field(default=65_536, ge=1_024, le=1_048_576)
+    auth_allow_insecure_http: bool = False
     redis_url: str = "redis://localhost:6379/0"
     document_storage_path: str = "./data/documents"
     max_upload_bytes: int = 20 * 1024 * 1024
@@ -93,10 +108,39 @@ class Settings(BaseSettings):
             raise ValueError("Chunk target cannot exceed chunk maximum")
         if not 0 <= self.chunk_overlap_chars < self.chunk_target_chars:
             raise ValueError("Chunk overlap must be smaller than chunk target")
-        if self.embedding_provider != "openai":
-            raise ValueError("Production embedding provider must be 'openai'")
+        if self.embedding_provider not in {"openai", "fake"}:
+            raise ValueError("Embedding provider is unsupported")
+        if self.embedding_provider == "fake" and self.app_env != "test":
+            raise ValueError("Fake embeddings are test-only")
+        if self.reranker_provider not in {"local", "fake"}:
+            raise ValueError("Reranker provider is unsupported")
+        if self.reranker_provider == "fake" and self.app_env != "test":
+            raise ValueError("Fake reranking is test-only")
         if self.embedding_dimensions != 1536:
             raise ValueError("Database schema requires 1536 embedding dimensions")
+        if self.auth_enabled:
+            if not self.auth_issuer or not self.auth_audience or not self.auth_jwks_url:
+                raise ValueError(
+                    "Authentication issuer, audience and JWKS URL are required"
+                )
+            if self.auth_allowed_algorithm != "RS256":
+                raise ValueError("Only RS256 is supported by this verification path")
+            if self.auth_allow_insecure_http and self.app_env not in {
+                "development",
+                "test",
+            }:
+                raise ValueError(
+                    "Insecure authentication transport is development-only"
+                )
+            if not self.auth_allow_insecure_http and (
+                not self.auth_issuer.startswith("https://")
+                or not self.auth_jwks_url.startswith("https://")
+            ):
+                raise ValueError("Authentication issuer and JWKS URL must use HTTPS")
+        elif self.app_env not in {"development", "test"}:
+            raise ValueError(
+                "Authentication cannot be disabled outside development/test"
+            )
         return self
 
 

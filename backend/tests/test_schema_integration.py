@@ -26,7 +26,7 @@ pytestmark = [
     ),
 ]
 
-REVISION = "f9a8b7c6d5e4"
+REVISION = "a1b2c3d4e5f6"
 
 
 async def test_database_is_at_expected_alembic_revision() -> None:
@@ -36,6 +36,35 @@ async def test_database_is_at_expected_alembic_revision() -> None:
         )
 
     assert revision == REVISION
+
+
+async def test_authentication_constraints_roles_and_indexes_exist() -> None:
+    async with engine.connect() as connection:
+        indexes = set(
+            await connection.scalars(
+                text(
+                    "SELECT indexname FROM pg_indexes WHERE indexname IN "
+                    "('ix_users_issuer_subject', "
+                    "'ix_memberships_tenant_enabled', "
+                    "'ix_processing_jobs_requested_by')"
+                )
+            )
+        )
+        roles = set(
+            await connection.scalars(
+                text(
+                    "SELECT enumlabel FROM pg_enum JOIN pg_type "
+                    "ON pg_type.oid = pg_enum.enumtypid "
+                    "WHERE typname = 'membership_role'"
+                )
+            )
+        )
+    assert indexes == {
+        "ix_users_issuer_subject",
+        "ix_memberships_tenant_enabled",
+        "ix_processing_jobs_requested_by",
+    }
+    assert roles == {"viewer", "editor", "admin"}
 
 
 async def test_embedding_hnsw_cosine_index_exists() -> None:
@@ -152,6 +181,8 @@ async def test_tenant_and_uniqueness_constraints_are_enforced() -> None:
             await connection.execute(
                 insert(User).values(
                     id=user_id,
+                    issuer="https://issuer.test",
+                    subject=str(user_id),
                     email=f"{user_id}@example.test",
                     display_name="Test User",
                 )

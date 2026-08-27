@@ -7,7 +7,7 @@ from pydantic import BaseModel, ValidationError
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import TrustedPrincipal, get_trusted_principal
+from app.auth import Permission, TrustedPrincipal, get_trusted_principal, has_permission
 from app.core.config import get_settings
 from app.db.models import Collection, Document, Membership, ProcessingJob
 from app.db.session import get_session
@@ -50,8 +50,9 @@ async def upload_document(
     session: Annotated[AsyncSession, Depends(get_session)],
     metadata: Annotated[str | None, Form()] = None,
 ) -> UploadResponse:
-    collection = await session.scalar(
-        select(Collection)
+    row = (
+        await session.execute(
+            select(Collection, Membership.role)
         .join(
             Membership,
             (Membership.tenant_id == Collection.tenant_id)
@@ -59,11 +60,16 @@ async def upload_document(
         )
         .where(
             Collection.id == collection_id,
-            Collection.tenant_id == principal.tenant_id,
+            Membership.enabled.is_(True),
         )
-    )
-    if collection is None:
+        )
+    ).one_or_none()
+    if row is None:
         raise HTTPException(status_code=404, detail="Collection not found")
+    collection, role = row
+    if not has_permission(role, Permission.UPLOAD):
+        raise HTTPException(status_code=403, detail="Permission denied")
+    tenant_id = collection.tenant_id
 
     try:
         if metadata is None:
@@ -81,7 +87,7 @@ async def upload_document(
     extension = PurePath(filename).suffix.lower()
     settings = get_settings()
     document_id, job_id = uuid4(), uuid4()
-    key = storage_key(principal.tenant_id, document_id, extension)
+    key = storage_key(tenant_id, document_id, extension)
     storage = LocalDocumentStorage(settings.document_storage_path)
     try:
         stored = await storage.store(file, key, settings.max_upload_bytes)
@@ -93,7 +99,7 @@ async def upload_document(
         )
         document = Document(
             id=document_id,
-            tenant_id=principal.tenant_id,
+            tenant_id=tenant_id,
             collection_id=collection_id,
             filename=filename,
             storage_key=key,
@@ -104,8 +110,9 @@ async def upload_document(
         )
         job = ProcessingJob(
             id=job_id,
-            tenant_id=principal.tenant_id,
+            tenant_id=tenant_id,
             document_id=document_id,
+            requested_by_user_id=principal.user_id,
             operation="verify_original",
         )
         session.add_all([document, job])
@@ -122,7 +129,7 @@ async def upload_document(
 
     try:
         verify_original_task.apply_async(
-            args=[str(principal.tenant_id), str(document_id), str(job_id)]
+            args=[str(tenant_id), str(document_id), str(job_id)]
         )
     except Exception as exc:
         await session.execute(delete(ProcessingJob).where(ProcessingJob.id == job_id))
@@ -147,8 +154,9 @@ async def get_processing_job(
     principal: Annotated[TrustedPrincipal, Depends(get_trusted_principal)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> JobResponse:
-    job = await session.scalar(
-        select(ProcessingJob)
+    row = (
+        await session.execute(
+            select(ProcessingJob, Membership.role)
         .join(
             Membership,
             (Membership.tenant_id == ProcessingJob.tenant_id)
@@ -156,11 +164,15 @@ async def get_processing_job(
         )
         .where(
             ProcessingJob.id == job_id,
-            ProcessingJob.tenant_id == principal.tenant_id,
+            Membership.enabled.is_(True),
         )
-    )
-    if job is None:
+        )
+    ).one_or_none()
+    if row is None:
         raise HTTPException(status_code=404, detail="Processing job not found")
+    job, role = row
+    if not has_permission(role, Permission.READ):
+        raise HTTPException(status_code=403, detail="Permission denied")
     return JobResponse(
         job_id=job.id,
         document_id=job.document_id,

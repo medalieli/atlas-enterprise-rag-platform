@@ -1,6 +1,6 @@
 # Project Roadmap
 
-Statuses: **Milestones 1–9 — completed.** Milestones 10–15 — pending.
+Statuses: **Milestones 1–10 — completed.** Milestones 11–15 — pending.
 
 ## 1. Repository foundation — Completed
 
@@ -56,7 +56,7 @@ Statuses: **Milestones 1–9 — completed.** Milestones 10–15 — pending.
 
 **Acceptance criteria:** The Responses API uses structured output; insufficient evidence produces an honest response; each citation resolves to an authorized retrieved passage with valid metadata and quote; fabricated IDs are rejected in tests.
 
-## 10. Authentication, collections and tenant isolation — Pending
+## 10. Authentication, collections and tenant isolation — Complete
 
 **Goal:** Deliver user identity, organization membership, and collection management with comprehensive isolation.
 

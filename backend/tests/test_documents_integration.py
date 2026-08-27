@@ -9,7 +9,14 @@ from sqlalchemy import delete, func, select
 
 from app.api import documents
 from app.auth import TrustedPrincipal, get_trusted_principal
-from app.db.models import Collection, Document, Membership, Organization, User
+from app.db.models import (
+    Collection,
+    Document,
+    Membership,
+    Organization,
+    ProcessingJob,
+    User,
+)
 from app.db.session import session_factory
 from app.main import app
 
@@ -35,11 +42,18 @@ async def seed() -> tuple[TrustedPrincipal, object, object, object, object]:
                     name="Other Tenant",
                     slug=str(other_tenant_id),
                 ),
-                User(id=user_id, email=f"{user_id}@example.test"),
+                User(
+                    id=user_id,
+                    issuer="https://issuer.test",
+                    subject=str(user_id),
+                    email=f"{user_id}@example.test",
+                ),
             ]
         )
         await session.flush()
-        session.add(Membership(tenant_id=tenant_id, user_id=user_id))
+        session.add(
+            Membership(tenant_id=tenant_id, user_id=user_id, role="editor")
+        )
         session.add_all(
             [
                 Collection(id=collection_id, tenant_id=tenant_id, name="Docs"),
@@ -75,7 +89,12 @@ async def test_upload_status_cross_tenant_and_queue_cleanup(
         max_docx_uncompressed_bytes=4096,
     )
     monkeypatch.setattr(documents, "get_settings", lambda: settings)
-    monkeypatch.setattr(documents.verify_original_task, "apply_async", lambda **_: None)
+    queued: list[list[str]] = []
+
+    def capture_queue(*, args: list[str]) -> None:
+        queued.append(args)
+
+    monkeypatch.setattr(documents.verify_original_task, "apply_async", capture_queue)
 
     async def principal_override() -> TrustedPrincipal:
         return principal
@@ -112,6 +131,15 @@ async def test_upload_status_cross_tenant_and_queue_cleanup(
                 "language": "en",
                 "effective_date": "2026-01-02",
             }
+            assert queued == [
+                [str(principal.tenant_id), body["document_id"], body["job_id"]]
+            ]
+            async with session_factory() as session:
+                audit_job = await session.scalar(
+                    select(ProcessingJob).where(ProcessingJob.id == body["job_id"])
+                )
+            assert audit_job is not None
+            assert audit_job.requested_by_user_id == principal.user_id
             status_response = await client.get(f"/processing-jobs/{body['job_id']}")
             assert status_response.status_code == 200
             assert status_response.json()["status"] == "queued"
