@@ -237,6 +237,25 @@ async def verify(private_one: object, private_two: object) -> None:
                 headers=headers["viewer"],
                 json={"query": "synthetic absent question", "retrieval_count": 5},
             )
+            conversation = await client.post(
+                f"/collections/{state['collection_a']}/conversations",
+                headers=headers["viewer"],
+            )
+            conversation_id = conversation.json()["id"]
+            conversation_path = (
+                f"/collections/{state['collection_a']}/conversations/"
+                f"{conversation_id}/messages"
+            )
+            first_turn = await client.post(
+                conversation_path,
+                headers={**headers["viewer"], "Idempotency-Key": "m11-first"},
+                json={"query": "synthetic absent question", "top_k": 5},
+            )
+            replayed_turn = await client.post(
+                conversation_path,
+                headers={**headers["viewer"], "Idempotency-Key": "m11-first"},
+                json={"query": "synthetic absent question", "top_k": 5},
+            )
             viewer_upload = await client.post(
                 f"/collections/{state['collection_a']}/documents",
                 headers=headers["viewer"],
@@ -341,6 +360,10 @@ async def verify(private_one: object, private_two: object) -> None:
         assert viewer_search.status_code == 200
         assert viewer_ask.status_code == 200
         assert viewer_ask.json()["status"] == "insufficient_context"
+        assert conversation.status_code == 201
+        assert first_turn.status_code == 200
+        assert first_turn.json()["answer"]["status"] == "insufficient_context"
+        assert replayed_turn.json() == first_turn.json()
         assert viewer_upload.status_code == 403
         assert no_membership.status_code == 403
         assert cross_collection.status_code == 404
@@ -359,6 +382,7 @@ async def verify(private_one: object, private_two: object) -> None:
             "rotation_refresh=passed"
         )
         print("viewer_search=200 viewer_ask=200 viewer_upload=403 editor_upload=202")
+        print("conversation_create=201 first_turn=200 idempotent_replay=identical")
         print("no_membership=403 cross_tenant_resource=404 admin_collection_create=201")
         print(
             "expired=401 wrong_audience=401 invalid_signature=401 "

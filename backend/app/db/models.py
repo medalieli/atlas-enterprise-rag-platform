@@ -46,6 +46,17 @@ class ProcessingJobStatus(StrEnum):
     FAILED = "failed"
 
 
+class ConversationTurnStatus(StrEnum):
+    PENDING = "pending"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class ConversationMessageRole(StrEnum):
+    USER = "user"
+    ASSISTANT = "assistant"
+
+
 class Organization(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "organizations"
 
@@ -412,6 +423,13 @@ class ProcessingJob(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 class Conversation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "conversations"
     __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "collection_id",
+            "id",
+            "created_by_user_id",
+            name="uq_conversations_owned_identity",
+        ),
         ForeignKeyConstraint(
             ["tenant_id", "created_by_user_id"],
             ["memberships.tenant_id", "memberships.user_id"],
@@ -440,9 +458,177 @@ class Conversation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     title: Mapped[str | None] = mapped_column(String(300))
 
 
+class ConversationTurn(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "conversation_turns"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "collection_id", "conversation_id", "created_by_user_id"],
+            [
+                "conversations.tenant_id",
+                "conversations.collection_id",
+                "conversations.id",
+                "conversations.created_by_user_id",
+            ],
+            name="fk_conversation_turns_owned_conversation",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "conversation_id", "sequence_number", name="uq_conversation_turn_sequence"
+        ),
+        UniqueConstraint(
+            "conversation_id",
+            "idempotency_key",
+            name="uq_conversation_turn_idempotency",
+        ),
+        CheckConstraint("sequence_number >= 1", name="ck_conversation_turn_sequence"),
+        CheckConstraint("top_k BETWEEN 1 AND 20", name="ck_conversation_turn_top_k"),
+        CheckConstraint(
+            "char_length(original_question) BETWEEN 1 AND 8000",
+            name="ck_conversation_turn_question_length",
+        ),
+        Index(
+            "ix_conversation_turns_owner",
+            "tenant_id",
+            "collection_id",
+            "created_by_user_id",
+        ),
+        Index(
+            "uq_conversation_turn_one_pending",
+            "conversation_id",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+        ),
+    )
+
+    tenant_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=False
+    )
+    collection_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=False
+    )
+    conversation_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=False
+    )
+    created_by_user_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=False
+    )
+    sequence_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[ConversationTurnStatus] = mapped_column(
+        Enum(
+            ConversationTurnStatus,
+            name="conversation_turn_status",
+            values_callable=lambda e: [v.value for v in e],
+        ),
+        nullable=False,
+        default=ConversationTurnStatus.PENDING,
+        server_default=ConversationTurnStatus.PENDING.value,
+    )
+    original_question: Mapped[str] = mapped_column(Text, nullable=False)
+    standalone_question: Mapped[str | None] = mapped_column(Text)
+    rewrite_status: Mapped[str | None] = mapped_column(String(32))
+    clarification_question: Mapped[str | None] = mapped_column(String(1000))
+    top_k: Mapped[int] = mapped_column(Integer, nullable=False)
+    filters: Mapped[dict[str, object]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    response: Mapped[dict[str, object] | None] = mapped_column(JSONB)
+    failure_category: Mapped[str | None] = mapped_column(String(100))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ConversationMessage(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "conversation_messages"
+    __table_args__ = (
+        UniqueConstraint(
+            "conversation_id",
+            "sequence_number",
+            name="uq_conversation_message_sequence",
+        ),
+        CheckConstraint(
+            "sequence_number >= 1", name="ck_conversation_message_sequence"
+        ),
+        CheckConstraint(
+            "char_length(content) BETWEEN 1 AND 16000",
+            name="ck_conversation_message_content",
+        ),
+        Index("ix_conversation_messages_history", "conversation_id", "sequence_number"),
+    )
+
+    conversation_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("conversations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    turn_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("conversation_turns.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    sequence_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    role: Mapped[ConversationMessageRole] = mapped_column(
+        Enum(
+            ConversationMessageRole,
+            name="conversation_message_role",
+            values_callable=lambda e: [v.value for v in e],
+        ),
+        nullable=False,
+    )
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ConversationCitation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "conversation_citations"
+    __table_args__ = (
+        UniqueConstraint(
+            "assistant_message_id",
+            "citation_order",
+            name="uq_conversation_citation_order",
+        ),
+        CheckConstraint("citation_order >= 1", name="ck_conversation_citation_order"),
+        Index("ix_conversation_citations_message", "assistant_message_id"),
+    )
+
+    assistant_message_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("conversation_messages.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    citation_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    chunk_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("document_chunks.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    document_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("documents.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    document_version_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=False
+    )
+    page_number: Mapped[int | None] = mapped_column(Integer)
+    section_path: Mapped[str | None] = mapped_column(String(1000))
+    start_offset: Mapped[int] = mapped_column(Integer, nullable=False)
+    end_offset: Mapped[int] = mapped_column(Integer, nullable=False)
+    document_metadata: Mapped[dict[str, object]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    exact_excerpt: Mapped[str] = mapped_column(Text, nullable=False)
+
+
 __all__ = [
     "Collection",
     "Conversation",
+    "ConversationCitation",
+    "ConversationMessage",
+    "ConversationMessageRole",
+    "ConversationTurn",
+    "ConversationTurnStatus",
     "Document",
     "DocumentChunk",
     "DocumentStatus",

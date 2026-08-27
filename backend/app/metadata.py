@@ -54,16 +54,19 @@ class DocumentMetadataInput(BaseModel):
     tags: list[TagValue] = Field(default_factory=list, max_length=MAX_TAGS)
     department: MetadataValue | None = None
     document_type: DocumentType | None = None
-    language: Annotated[
-        str,
-        StringConstraints(
-            strip_whitespace=True,
-            to_lower=True,
-            min_length=2,
-            max_length=16,
-            pattern=r"^[a-z]{2,3}(?:-[a-z0-9]{2,8})?$",
-        ),
-    ] | None = None
+    language: (
+        Annotated[
+            str,
+            StringConstraints(
+                strip_whitespace=True,
+                to_lower=True,
+                min_length=2,
+                max_length=16,
+                pattern=r"^[a-z]{2,3}(?:-[a-z0-9]{2,8})?$",
+            ),
+        ]
+        | None
+    ) = None
     effective_date: date | None = None
 
     @field_validator("tags")
@@ -213,7 +216,9 @@ def document_filter_predicates(
         )
     if filters.departments:
         predicates.append(
-            Document.document_metadata["department"].as_string().in_(filters.departments)
+            Document.document_metadata["department"]
+            .as_string()
+            .in_(filters.departments)
         )
     if filters.document_types:
         predicates.append(

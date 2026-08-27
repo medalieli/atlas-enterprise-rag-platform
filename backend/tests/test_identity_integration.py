@@ -150,9 +150,7 @@ async def test_disabled_membership_is_rejected() -> None:
         async with httpx.AsyncClient(
             transport=transport, base_url="http://test"
         ) as client:
-            response = await client.get(
-                "/collections", params={"tenant_id": tenant_id}
-            )
+            response = await client.get("/collections", params={"tenant_id": tenant_id})
         assert response.status_code == 403
     finally:
         app.dependency_overrides.clear()
@@ -162,9 +160,7 @@ async def test_disabled_membership_is_rejected() -> None:
 async def test_bootstrap_is_idempotent_and_does_not_create_tenant() -> None:
     tenant_id = uuid4()
     async with session_factory() as session, session.begin():
-        session.add(
-            Organization(id=tenant_id, name="Bootstrap", slug=f"b-{tenant_id}")
-        )
+        session.add(Organization(id=tenant_id, name="Bootstrap", slug=f"b-{tenant_id}"))
     try:
         first = await bind_identity(
             "https://issuer.bootstrap.test",
@@ -212,9 +208,7 @@ async def test_issuer_subject_pair_is_unique_but_subject_is_provider_scoped() ->
         )
     try:
         async with session_factory() as session:
-            session.add(
-                User(issuer="https://issuer-a.test", subject=subject)
-            )
+            session.add(User(issuer="https://issuer-a.test", subject=subject))
             with pytest.raises(IntegrityError):
                 await session.commit()
     finally:

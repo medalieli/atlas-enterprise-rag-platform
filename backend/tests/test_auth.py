@@ -129,9 +129,9 @@ async def test_missing_required_claim_is_rejected(key_pair: tuple) -> None:
         headers={"kid": KID, "typ": "at+jwt"},
     )
     with pytest.raises(AuthenticationFailure):
-        await AccessTokenVerifier(
-            auth_settings(), StaticCache(public_key)
-        ).verify(token)
+        await AccessTokenVerifier(auth_settings(), StaticCache(public_key)).verify(
+            token
+        )
 
 
 @pytest.mark.parametrize(
@@ -156,9 +156,9 @@ async def test_untrusted_header_cannot_change_verification_policy(
     encoded = jwt.utils.base64url_encode(json.dumps(forged_headers).encode()).decode()
     forged = ".".join((encoded, parts[1], parts[2]))
     with pytest.raises(AuthenticationFailure) as captured:
-        await AccessTokenVerifier(
-            auth_settings(), StaticCache(public_key)
-        ).verify(forged)
+        await AccessTokenVerifier(auth_settings(), StaticCache(public_key)).verify(
+            forged
+        )
     assert captured.value.category == category
 
 

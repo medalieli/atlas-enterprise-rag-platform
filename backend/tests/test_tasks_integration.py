@@ -243,9 +243,12 @@ async def test_embedding_failure_publishes_no_partial_chunks(
     monkeypatch.setattr(tasks, "get_settings", lambda: settings(root))
     tenant_id, document_id, job_id = await make_job(root, create_file=True)
     try:
-        assert await tasks.process_job(
-            tenant_id, document_id, job_id, FailingEmbeddingProvider()
-        ) == "failed"
+        assert (
+            await tasks.process_job(
+                tenant_id, document_id, job_id, FailingEmbeddingProvider()
+            )
+            == "failed"
+        )
         async with session_factory() as session:
             chunks = (
                 await session.scalars(

@@ -45,6 +45,8 @@ Warning: `docker compose down -v` permanently deletes the local PostgreSQL volum
 - Hybrid retrieval: `POST /collections/{collection_id}/hybrid-search`
 - Reranked retrieval: `POST /collections/{collection_id}/reranked-search`
 - Grounded answers: `POST /collections/{collection_id}/ask`
+- Conversations: `POST /collections/{collection_id}/conversations`
+- Conversation turns: `POST /collections/{collection_id}/conversations/{conversation_id}/messages`
 - Current identity: `GET /auth/me`
 - List collections: `GET /collections?tenant_id=<TENANT_UUID>`
 - Create collection: `POST /collections`
@@ -124,6 +126,11 @@ issuer/JWKS setup, strict JWT validation, identity provisioning, roles, collecti
 management, tenant isolation, key rotation, TLS and revocation limitations. Business
 requests use `Authorization: Bearer <ACCESS_TOKEN>`; the API validates tokens but
 does not issue them.
+
+The [Milestone 11 conversation guide](docs/CONVERSATIONS.md) documents PostgreSQL-owned
+history, bounded Luna follow-up rewriting, clarification, idempotent serialized turns,
+and current-turn citation revalidation. The existing stateless `/ask` endpoint remains
+unchanged.
 
 ## Troubleshooting
 

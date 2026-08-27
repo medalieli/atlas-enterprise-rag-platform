@@ -6,6 +6,9 @@ from app.db.base import Base
 EXPECTED_TABLES = {
     "collections",
     "conversations",
+    "conversation_citations",
+    "conversation_messages",
+    "conversation_turns",
     "document_chunks",
     "document_source_units",
     "documents",
@@ -21,7 +24,8 @@ def test_metadata_contains_expected_tables() -> None:
 
 
 def test_every_tenant_owned_table_has_a_required_tenant_key() -> None:
-    for table_name in EXPECTED_TABLES - {"organizations", "users"}:
+    inherited_scope = {"conversation_citations", "conversation_messages"}
+    for table_name in EXPECTED_TABLES - {"organizations", "users"} - inherited_scope:
         tenant_column = Base.metadata.tables[table_name].c.tenant_id
         assert tenant_column.nullable is False
 

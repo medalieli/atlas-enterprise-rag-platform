@@ -53,15 +53,15 @@ async def upload_document(
     row = (
         await session.execute(
             select(Collection, Membership.role)
-        .join(
-            Membership,
-            (Membership.tenant_id == Collection.tenant_id)
-            & (Membership.user_id == principal.user_id),
-        )
-        .where(
-            Collection.id == collection_id,
-            Membership.enabled.is_(True),
-        )
+            .join(
+                Membership,
+                (Membership.tenant_id == Collection.tenant_id)
+                & (Membership.user_id == principal.user_id),
+            )
+            .where(
+                Collection.id == collection_id,
+                Membership.enabled.is_(True),
+            )
         )
     ).one_or_none()
     if row is None:
@@ -157,15 +157,15 @@ async def get_processing_job(
     row = (
         await session.execute(
             select(ProcessingJob, Membership.role)
-        .join(
-            Membership,
-            (Membership.tenant_id == ProcessingJob.tenant_id)
-            & (Membership.user_id == principal.user_id),
-        )
-        .where(
-            ProcessingJob.id == job_id,
-            Membership.enabled.is_(True),
-        )
+            .join(
+                Membership,
+                (Membership.tenant_id == ProcessingJob.tenant_id)
+                & (Membership.user_id == principal.user_id),
+            )
+            .where(
+                ProcessingJob.id == job_id,
+                Membership.enabled.is_(True),
+            )
         )
     ).one_or_none()
     if row is None:

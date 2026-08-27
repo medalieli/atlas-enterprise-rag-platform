@@ -171,9 +171,7 @@ class IntegrationFakeAnswerGenerator:
             text = "Réponse fondée." if "Quel" in query else "Grounded answer."
             output = GeneratedAnswer(
                 status=AnswerStatus.ANSWERED,
-                claims=[
-                    GeneratedClaim(text=text, source_ids=[sources[0].source_id])
-                ],
+                claims=[GeneratedClaim(text=text, source_ids=[sources[0].source_id])],
                 insufficient_reason=None,
             )
         return GenerationResult(

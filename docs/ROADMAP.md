@@ -62,7 +62,7 @@ Statuses: **Milestones 1–10 — completed.** Milestones 11–15 — pending.
 
 **Acceptance criteria:** Registration and authentication flows are tested; backend queries derive tenant scope from authenticated membership; cross-tenant read/write attempts fail; frontend-supplied organization IDs never grant access.
 
-## 11. Conversation history and follow-up-question rewriting — Pending
+## 11. Conversation history and follow-up-question rewriting — Complete
 
 **Goal:** Support contextual conversations without allowing history to corrupt scope or retrieval intent.
 

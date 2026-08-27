@@ -26,7 +26,37 @@ pytestmark = [
     ),
 ]
 
-REVISION = "a1b2c3d4e5f6"
+REVISION = "b2c3d4e5f6a7"
+
+
+async def test_conversation_history_constraints_and_indexes_exist() -> None:
+    expected = {
+        "ix_conversation_turns_owner",
+        "uq_conversation_turn_one_pending",
+        "ix_conversation_messages_history",
+        "ix_conversation_citations_message",
+    }
+    async with engine.connect() as connection:
+        indexes = set(
+            await connection.scalars(
+                text(
+                    "SELECT indexname FROM pg_indexes WHERE tablename IN "
+                    "('conversation_turns', 'conversation_messages', "
+                    "'conversation_citations')"
+                )
+            )
+        )
+        roles = set(
+            await connection.scalars(
+                text(
+                    "SELECT enumlabel FROM pg_enum JOIN pg_type "
+                    "ON pg_type.oid = pg_enum.enumtypid "
+                    "WHERE typname = 'conversation_message_role'"
+                )
+            )
+        )
+    assert expected <= indexes
+    assert roles == {"user", "assistant"}
 
 
 async def test_database_is_at_expected_alembic_revision() -> None:
@@ -121,8 +151,7 @@ async def test_document_metadata_constraints_and_indexes_exist() -> None:
             (
                 await connection.execute(
                     text(
-                        "SELECT indexname FROM pg_indexes "
-                        "WHERE tablename = 'documents'"
+                        "SELECT indexname FROM pg_indexes WHERE tablename = 'documents'"
                     )
                 )
             ).scalars()
@@ -145,15 +174,19 @@ async def test_document_metadata_constraints_and_indexes_exist() -> None:
 async def test_full_text_operator_is_plannable_without_assuming_index_choice() -> None:
     async with engine.connect() as connection:
         plan_rows = (
-            await connection.execute(
-                text(
-                    "EXPLAIN (COSTS OFF) "
-                    "SELECT id FROM document_chunks "
-                    "WHERE search_vector @@ "
-                    "websearch_to_tsquery('simple'::regconfig, 'ENTREFUND30')"
+            (
+                await connection.execute(
+                    text(
+                        "EXPLAIN (COSTS OFF) "
+                        "SELECT id FROM document_chunks "
+                        "WHERE search_vector @@ "
+                        "websearch_to_tsquery('simple'::regconfig, 'ENTREFUND30')"
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
     plan = "\n".join(plan_rows)
     assert "search_vector" in plan
     assert "@@" in plan

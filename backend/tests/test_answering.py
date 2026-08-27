@@ -121,7 +121,7 @@ def test_prompt_separates_question_and_marks_sources_untrusted() -> None:
     )
     context = AnswerContext(
         (source,),
-        f"<source id=\"src_safe\">{source.content}</source>",
+        f'<source id="src_safe">{source.content}</source>',
         12,
         80,
         0,
@@ -154,9 +154,7 @@ def test_prompt_separates_question_and_marks_sources_untrusted() -> None:
             True,
         ),
         (
-            GeneratedAnswer(
-                status="answered", claims=[], insufficient_reason=None
-            ),
+            GeneratedAnswer(status="answered", claims=[], insufficient_reason=None),
             False,
         ),
         (
@@ -434,9 +432,7 @@ async def test_citation_numbering_is_first_use_order_and_deterministic() -> None
         status="answered",
         claims=[
             GeneratedClaim(text="Second first", source_ids=[second.source_id]),
-            GeneratedClaim(
-                text="Both", source_ids=[first.source_id, second.source_id]
-            ),
+            GeneratedClaim(text="Both", source_ids=[first.source_id, second.source_id]),
         ],
         insufficient_reason=None,
     )

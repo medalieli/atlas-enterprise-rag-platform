@@ -167,15 +167,15 @@ async def authorize_collection(
     row = (
         await session.execute(
             select(Collection.tenant_id, Membership.role)
-        .join(
-            Membership,
-            (Membership.tenant_id == Collection.tenant_id)
-            & (Membership.user_id == principal.user_id),
-        )
-        .where(
-            Collection.id == collection_id,
-            Membership.enabled.is_(True),
-        )
+            .join(
+                Membership,
+                (Membership.tenant_id == Collection.tenant_id)
+                & (Membership.user_id == principal.user_id),
+            )
+            .where(
+                Collection.id == collection_id,
+                Membership.enabled.is_(True),
+            )
         )
     ).one_or_none()
     if row is None:
@@ -423,9 +423,7 @@ async def reranked_search(
     request: SemanticSearchRequest,
     principal: Annotated[TrustedPrincipal, Depends(get_trusted_principal)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    embedding_provider: Annotated[
-        EmbeddingProvider, Depends(get_embedding_provider)
-    ],
+    embedding_provider: Annotated[EmbeddingProvider, Depends(get_embedding_provider)],
     reranker: Annotated[RerankerProvider, Depends(get_reranker_dependency)],
 ) -> RerankedSearchResponse:
     settings = get_settings()
@@ -481,7 +479,5 @@ async def reranked_search(
         (perf_counter() - started) * 1000,
     )
     return RerankedSearchResponse(
-        results=[
-            _reranked_result(rank, item) for rank, item in enumerate(results, 1)
-        ]
+        results=[_reranked_result(rank, item) for rank, item in enumerate(results, 1)]
     )

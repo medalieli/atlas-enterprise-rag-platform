@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.api.answers import router as answers_router
+from app.api.conversations import router as conversations_router
 from app.api.documents import router as documents_router
 from app.api.health import router as health_router
 from app.api.identity import router as identity_router
@@ -25,6 +26,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 settings = get_settings()
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
 app.include_router(answers_router)
+app.include_router(conversations_router)
 app.include_router(health_router)
 app.include_router(identity_router)
 app.include_router(documents_router)

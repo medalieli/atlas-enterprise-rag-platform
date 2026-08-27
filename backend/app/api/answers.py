@@ -114,6 +114,11 @@ def get_answer_generator_dependency() -> AnswerGenerator | None:
         return None
 
 
+def get_original_question_dependency() -> str | None:
+    """Internal override used only by the conversational orchestration path."""
+    return None
+
+
 def _raise_answer_provider_unavailable() -> GenerationResult:
     raise AnswerProviderUnavailableError("Answer provider unavailable")
 
@@ -151,13 +156,12 @@ async def ask(
     request: AskRequest,
     principal: Annotated[TrustedPrincipal, Depends(get_trusted_principal)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    embedding_provider: Annotated[
-        EmbeddingProvider, Depends(get_embedding_provider)
-    ],
+    embedding_provider: Annotated[EmbeddingProvider, Depends(get_embedding_provider)],
     reranker: Annotated[RerankerProvider, Depends(get_reranker_dependency)],
     answer_generator: Annotated[
         AnswerGenerator | None, Depends(get_answer_generator_dependency)
     ],
+    original_question: Annotated[str | None, Depends(get_original_question_dependency)],
 ) -> AskResponse:
     settings = get_settings()
     if request.retrieval_count > settings.reranker_candidate_limit:
@@ -186,9 +190,7 @@ async def ask(
         depth,
         request.filters,
     )
-    fused = reciprocal_rank_fusion(
-        semantic, keyword, settings.reranker_candidate_limit
-    )
+    fused = reciprocal_rank_fusion(semantic, keyword, settings.reranker_candidate_limit)
     try:
         reranked = await rerank_hybrid_candidates(
             request.query,
@@ -199,18 +201,22 @@ async def ask(
         )
     except RerankerError as exc:
         raise HTTPException(status_code=503, detail="Reranker unavailable") from exc
-    context = build_answer_context(
-        reranked, tenant_id, collection_id, settings
-    )
+    context = build_answer_context(reranked, tenant_id, collection_id, settings)
     retrieval_ms = (perf_counter() - started) * 1_000
     generation_started = perf_counter()
+    generation_question = original_question or request.query
+    if original_question is not None and original_question != request.query:
+        generation_question = (
+            f"Current user question:\n{original_question}\n\n"
+            f"Validated standalone retrieval interpretation:\n{request.query}"
+        )
     try:
         generated = (
-            _empty_generation(settings.answer_model, request.query)
+            _empty_generation(settings.answer_model, original_question or request.query)
             if not context.sources
             else await generate_bounded(
                 answer_generator,
-                request.query,
+                generation_question,
                 context,
                 settings.answer_provider_timeout_seconds,
             )

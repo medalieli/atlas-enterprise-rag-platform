@@ -51,9 +51,7 @@ async def seed() -> tuple[TrustedPrincipal, object, object, object, object]:
             ]
         )
         await session.flush()
-        session.add(
-            Membership(tenant_id=tenant_id, user_id=user_id, role="editor")
-        )
+        session.add(Membership(tenant_id=tenant_id, user_id=user_id, role="editor"))
         session.add_all(
             [
                 Collection(id=collection_id, tenant_id=tenant_id, name="Docs"),
@@ -153,10 +151,7 @@ async def test_upload_status_cross_tenant_and_queue_cleanup(
                 f"/collections/{collection_id}/documents",
                 files={"file": ("unsafe.pdf", b"%PDF-1.7\nvalid", "application/pdf")},
                 data={
-                    "metadata": (
-                        '{"tenant_id":'
-                        '"00000000-0000-0000-0000-000000000000"}'
-                    )
+                    "metadata": ('{"tenant_id":"00000000-0000-0000-0000-000000000000"}')
                 },
             )
             assert ownership_override.status_code == 422

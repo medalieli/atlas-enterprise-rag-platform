@@ -53,6 +53,16 @@ class Settings(BaseSettings):
     answer_max_concurrency: int = Field(default=2, ge=1, le=8)
     answer_max_claims: int = Field(default=12, ge=1, le=30)
     answer_max_citations_per_claim: int = Field(default=5, ge=1, le=10)
+    rewrite_model: str = "gpt-5.6-luna"
+    rewrite_reasoning_effort: str = "low"
+    rewrite_max_output_tokens: int = Field(default=600, ge=128, le=2_000)
+    rewrite_provider_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
+    rewrite_provider_max_retries: int = Field(default=1, ge=0, le=1)
+    rewrite_max_concurrency: int = Field(default=2, ge=1, le=8)
+    conversation_history_max_turns: int = Field(default=6, ge=1, le=20)
+    conversation_history_max_messages: int = Field(default=12, ge=2, le=40)
+    conversation_history_max_tokens: int = Field(default=4_000, ge=128, le=20_000)
+    conversation_history_max_chars: int = Field(default=16_000, ge=1_024, le=100_000)
     auth_enabled: bool = False
     auth_issuer: str | None = None
     auth_audience: str | None = None
