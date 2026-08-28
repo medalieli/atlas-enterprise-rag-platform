@@ -2,7 +2,7 @@
 
 Dataset: `synthetic-rag-regression` `2026.08.1` (14 cases; 9 development, 5 held-out)
 SHA-256: `df919658e1d0f2b4ebaf3669d30c87bebeb68702a5ca37c58b9be907e0a8f0da`
-Git commit: `195b183bfe26ead4c26d8dd160d7dd27ec010b1a`
+Git commit: `14b34fe5b7867fd409279591aadc2a88ddde4827`
 
 No provider or LLM-judge calls were made. Results describe a small synthetic fixture and are not statistically general.
 

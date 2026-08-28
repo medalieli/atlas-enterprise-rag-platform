@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     reranker_max_length: int = Field(default=512, ge=32, le=1024)
     reranker_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
     reranker_max_concurrency: int = Field(default=2, ge=1, le=8)
+    answer_provider: str = "openai"
     answer_model: str = "gpt-5.6-terra"
     answer_reasoning_effort: str = "low"
     answer_verbosity: str = "medium"
@@ -131,6 +132,10 @@ class Settings(BaseSettings):
             raise ValueError("Reranker provider is unsupported")
         if self.reranker_provider == "fake" and self.app_env != "test":
             raise ValueError("Fake reranking is test-only")
+        if self.answer_provider not in {"openai", "fake"}:
+            raise ValueError("Answer provider is unsupported")
+        if self.answer_provider == "fake" and self.app_env != "test":
+            raise ValueError("Fake answers are test-only")
         if self.embedding_dimensions != 1536:
             raise ValueError("Database schema requires 1536 embedding dimensions")
         if self.auth_enabled:
@@ -156,6 +161,35 @@ class Settings(BaseSettings):
             raise ValueError(
                 "Authentication cannot be disabled outside development/test"
             )
+        if self.app_env == "production":
+            weak_markers = {"", "password", "changeme", "change-me", "secret"}
+            password = self.postgres_password.get_secret_value().strip().lower()
+            if (
+                len(password) < 16
+                or password in weak_markers
+                or "development" in password
+            ):
+                raise ValueError("Production database password is missing or weak")
+            if self.embedding_provider == "openai":
+                key = (
+                    self.openai_api_key.get_secret_value().strip()
+                    if self.openai_api_key
+                    else ""
+                )
+                if len(key) < 20 or key.lower() in weak_markers:
+                    raise ValueError(
+                        "Production OpenAI API key is missing or placeholder"
+                    )
+            if self.metrics_enabled:
+                token = (
+                    self.metrics_bearer_token.get_secret_value().strip()
+                    if self.metrics_bearer_token
+                    else ""
+                )
+                if len(token) < 32 or token.lower() in weak_markers:
+                    raise ValueError("Production metrics credential is missing or weak")
+            if self.development_tenant_id or self.development_user_id:
+                raise ValueError("Development principals are forbidden in production")
         return self
 
 

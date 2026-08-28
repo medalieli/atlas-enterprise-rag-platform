@@ -77,6 +77,7 @@ services:
       RERANKER_TIMEOUT_SECONDS: ${RERANKER_TIMEOUT_SECONDS:-30}
       RERANKER_MAX_CONCURRENCY: ${RERANKER_MAX_CONCURRENCY:-2}
       ANSWER_MODEL: ${ANSWER_MODEL:-gpt-5.6-terra}
+      ANSWER_PROVIDER: ${ANSWER_PROVIDER:-openai}
       ANSWER_REASONING_EFFORT: ${ANSWER_REASONING_EFFORT:-low}
       ANSWER_VERBOSITY: ${ANSWER_VERBOSITY:-medium}
       ANSWER_MAX_CONTEXT_CHUNKS: ${ANSWER_MAX_CONTEXT_CHUNKS:-8}
@@ -165,7 +166,7 @@ services:
       context: ./backend
       args:
         DOWNLOAD_RERANKER: ${DOWNLOAD_RERANKER:-true}
-    command: ["uv", "run", "--no-sync", "celery", "-A", "app.worker:celery_app", "worker", "--loglevel=WARNING", "--concurrency=2"]
+    command: ["celery", "-A", "app.worker:celery_app", "worker", "--loglevel=WARNING", "--concurrency=2"]
     environment:
       APP_ENV: ${APP_ENV:-development}
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://rag_assistant_dev:rag_assistant_dev@postgres:5432/rag_assistant_dev}
@@ -200,7 +201,7 @@ services:
     volumes:
       - document_storage:/data/documents
     healthcheck:
-      test: ["CMD-SHELL", "uv run --no-sync celery -A app.worker:celery_app inspect ping -d celery@$$HOSTNAME --timeout 5 | grep -q pong"]
+      test: ["CMD-SHELL", "celery -A app.worker:celery_app inspect ping -d celery@$$HOSTNAME --timeout 5 | grep -q pong"]
       interval: 15s
       timeout: 10s
       retries: 5

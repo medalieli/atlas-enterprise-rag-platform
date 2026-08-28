@@ -11,6 +11,8 @@ env/
 ENV/
 .mypy_cache/
 .ruff_cache/
+.tmp/
+backend/.tmp/
 .pytest_cache/
 pytest-cache-files-*/
 .tox/

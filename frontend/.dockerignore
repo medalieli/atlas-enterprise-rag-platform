@@ -2,3 +2,9 @@ node_modules
 .next
 test-results
 playwright-report
+.git
+.github
+*.md
+e2e
+tests
+coverage*

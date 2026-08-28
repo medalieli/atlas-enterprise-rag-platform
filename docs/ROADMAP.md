@@ -1,6 +1,6 @@
 # Project Roadmap
 
-Statuses: **Milestones 1–14 — completed.** Milestone 15 — pending.
+Statuses: **Milestones 1–15 — completed.**
 
 ## 1. Repository foundation — Completed
 
@@ -86,7 +86,7 @@ Statuses: **Milestones 1–14 — completed.** Milestone 15 — pending.
 
 **Acceptance criteria:** Versioned datasets exercise retrieval, citations, groundedness, refusals, and isolation; deterministic metrics and supplemental Ragas evaluation run; structured logs and useful traces/metrics cover ingestion and queries; measured baselines are documented.
 
-## 15. Docker hardening, deployment and portfolio documentation — Pending
+## 15. Docker hardening, deployment and portfolio documentation — Complete
 
 **Goal:** Harden the complete local stack and present a reproducible, accurate portfolio project.
 

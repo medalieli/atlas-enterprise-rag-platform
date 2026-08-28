@@ -1,5 +1,27 @@
 # Production RAG Knowledge Assistant
 
+A production-oriented multi-tenant system for ingesting PDF/DOCX sources, comparing lexical/vector/hybrid retrieval, and answering with server-validated exact-source citations. It is a portfolio project, not a claim of certification, high availability or measured production scale.
+
+![Synthetic product tour](docs/portfolio/synthetic-product-tour.png)
+
+## Portfolio highlights
+
+- OIDC-backed BFF sessions and database-derived tenant roles
+- idempotent traceable ingestion and immutable lifecycle generations
+- keyword, semantic, hybrid and local cross-encoder reranking
+- grounded answers, refusals and validated citation source access
+- deterministic fake-provider evaluation and privacy-conscious telemetry
+- hardened TLS-only edge, private services, file secrets and recovery tooling
+
+| Mode | Strength | Tradeoff | Synthetic Recall@10 |
+| --- | --- | --- | ---: |
+| Keyword | exact terms/codes | misses paraphrases | 0.9286 |
+| Semantic | paraphrases | weaker exact tokens | 0.9286 |
+| Hybrid | combines both | more database work | 1.0000 |
+| Reranked | final ordering | CPU/memory/latency | 1.0000 |
+
+Dataset `2026.08.1` has 14 synthetic cases; these are regression fixtures, not general accuracy claims. Production deployment, trust boundaries, recovery and the three-minute demo are documented in `docs/DEPLOYMENT.md`, `docs/THREAT_MODEL.md`, `docs/OPERATIONS.md` and `docs/PORTFOLIO.md`. Known limitations include application-enforced (not RLS) tenant isolation, single-host Compose, no OCR, bounded evaluation, local-model resource cost, provider token cost and no configured public deployment.
+
 The Milestone 13 Next.js workspace, OAuth/OIDC Backend-for-Frontend setup, role
 behavior and frontend commands are documented in
 [`docs/FRONTEND.md`](docs/FRONTEND.md). The browser application runs at

@@ -225,6 +225,29 @@ class OpenAIFollowUpRewriter:
         raise RewriteError("Rewrite provider unavailable")
 
 
+class DeterministicFakeFollowUpRewriter:
+    """Test-only follow-up rewriter with deterministic, offline output."""
+
+    async def rewrite(
+        self, question: str, history: tuple[HistoryMessage, ...]
+    ) -> RewriteResult:
+        used = [str(history[-1].id)] if history else []
+        return RewriteResult(
+            RewriteOutput(
+                status=RewriteStatus.REWRITTEN if history else RewriteStatus.STANDALONE,
+                standalone_query=question,
+                used_history_message_ids=used,
+            ),
+            "fake-rewriter-v1",
+            "fake-rewriter-v1",
+            0,
+            0,
+        )
+
+
 @lru_cache
 def get_follow_up_rewriter() -> FollowUpRewriter:
-    return OpenAIFollowUpRewriter(get_settings())
+    settings = get_settings()
+    if settings.answer_provider == "fake":
+        return DeterministicFakeFollowUpRewriter()
+    return OpenAIFollowUpRewriter(settings)

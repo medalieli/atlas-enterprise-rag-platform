@@ -1,0 +1,45 @@
+name: Security and supply chain
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '17 4 * * 1'
+permissions:
+  contents: read
+  security-events: write
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with: {fetch-depth: 0}
+      - uses: astral-sh/setup-uv@6b9c6063abd6010835644d4c2e1bef4cf5cd0fca
+      - run: cd backend && uv export --frozen --no-dev --no-hashes -o requirements.txt
+      - run: cd backend && sed -i '/^torch==/d' requirements.txt && uvx pip-audit --no-deps -r requirements.txt
+      - run: cd frontend && npm audit --omit=dev --audit-level=high
+      - run: uvx bandit -r backend/app -q
+      - run: docker run --rm -v "$PWD:/src" zricethezav/gitleaks@sha256:cdbb7c955abce02001a9f6c9f602fb195b7fadc1e812065883f695d1eeaba854 detect --source=/src --no-banner
+      - run: docker run --rm -i hadolint/hadolint@sha256:27086352fd5e1907ea2b934eb1023f217c5ae087992eb59fde121dce9c9ff21e < backend/Dockerfile
+      - run: docker run --rm -i hadolint/hadolint@sha256:27086352fd5e1907ea2b934eb1023f217c5ae087992eb59fde121dce9c9ff21e < frontend/Dockerfile
+  images:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    permissions: {contents: read, packages: write, id-token: write, attestations: write}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: docker build -t rag-api:${GITHUB_SHA} backend && docker build -t rag-frontend:${GITHUB_SHA} frontend
+      - run: docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy@sha256:a22415a38938a56c379387a8163fcb0ce38b10ace73e593475d3658d578b2436 image --exit-code 1 --ignore-unfixed --severity CRITICAL,HIGH rag-api:${GITHUB_SHA}
+      - run: docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy@sha256:a22415a38938a56c379387a8163fcb0ce38b10ace73e593475d3658d578b2436 image --exit-code 1 --ignore-unfixed --severity CRITICAL,HIGH rag-frontend:${GITHUB_SHA}
+      - run: docker run --rm -v /var/run/docker.sock:/var/run/docker.sock anchore/syft@sha256:c15fa8af4c25edd72c0daf026d095fe51adbcfc7ad5d79a66e93d88f249e5abb rag-api:${GITHUB_SHA} -o cyclonedx-json=api-sbom.cdx.json
+      - run: docker run --rm -v /var/run/docker.sock:/var/run/docker.sock anchore/syft@sha256:c15fa8af4c25edd72c0daf026d095fe51adbcfc7ad5d79a66e93d88f249e5abb rag-frontend:${GITHUB_SHA} -o cyclonedx-json=frontend-sbom.cdx.json
+      - uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
+        with: {name: sbom-${{ github.sha }}, path: "*-sbom.cdx.json", retention-days: 14}
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [audit, images]
+    runs-on: ubuntu-24.04
+    environment: production
+    permissions: {contents: read, id-token: write}
+    steps:
+      - run: echo "Provider-neutral deployment gate passed; configure an OIDC-based platform command in the protected environment."

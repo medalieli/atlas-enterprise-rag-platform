@@ -32,11 +32,16 @@ async def get_session() -> AsyncIterator[AsyncSession]:
 
 async def check_database_readiness() -> DatabaseReadiness:
     """Verify database connectivity and return the installed pgvector version."""
-    async with engine.connect() as connection:
-        await connection.execute(text("SELECT 1"))
-        version = await connection.scalar(
-            text("SELECT extversion FROM pg_extension WHERE extname = 'vector'")
-        )
+    try:
+        async with engine.connect() as connection:
+            await connection.execute(text("SELECT 1"))
+            version = await connection.scalar(
+                text("SELECT extversion FROM pg_extension WHERE extname = 'vector'")
+            )
+    except Exception as exc:
+        # Drivers can surface disconnects as DBAPI-specific exception classes. Keep
+        # readiness deterministic and never serialize connection details.
+        raise RuntimeError("Database unavailable") from exc
 
     if version is None:
         raise RuntimeError("Required vector extension is not installed")

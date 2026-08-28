@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import re
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -71,6 +72,7 @@ class QuietJWKSHandler(BaseHTTPRequestHandler):
 
 
 def environment() -> dict[str, str]:
+    fake_providers = os.environ.get("M15_FAKE_PROVIDERS") == "1"
     return {
         **os.environ,
         "COMPOSE_PROJECT_NAME": PROJECT,
@@ -87,9 +89,13 @@ def environment() -> dict[str, str]:
         "AUTH_JWKS_URL": f"{ISSUER}/jwks",
         "AUTH_ALLOW_INSECURE_HTTP": "true",
         "AUTH_JWKS_CACHE_SECONDS": "300",
-        "EMBEDDING_PROVIDER": "openai",
-        "RERANKER_PROVIDER": "local",
-        "DOWNLOAD_RERANKER": "true",
+        "EMBEDDING_PROVIDER": "fake" if fake_providers else "openai",
+        "RERANKER_PROVIDER": "fake" if fake_providers else "local",
+        "ANSWER_PROVIDER": "fake" if fake_providers else "openai",
+        "OPENAI_API_KEY": (
+            "" if fake_providers else os.environ.get("OPENAI_API_KEY", "")
+        ),
+        "DOWNLOAD_RERANKER": "false" if fake_providers else "true",
     }
 
 
@@ -111,9 +117,6 @@ def start_stack() -> None:
         "run",
         "--rm",
         "api",
-        "uv",
-        "run",
-        "--no-sync",
         "alembic",
         "upgrade",
         "head",
@@ -139,6 +142,85 @@ def require(response: httpx.Response, expected: int) -> dict[str, object]:
             f"unexpected_api_status={response.status_code} expected={expected}"
         )
     return response.json() if response.content else {}
+
+
+async def authenticated_load(
+    client: httpx.AsyncClient,
+    collection: UUID,
+    headers: dict[str, dict[str, str]],
+    requests: int = 60,
+    concurrency: int = 10,
+) -> dict[str, object]:
+    """Bounded, synthetic, authenticated workload for the test-only provider path."""
+    operations = ("keyword", "semantic", "hybrid", "reranked", "ask", "conversation")
+    sem = asyncio.Semaphore(concurrency)
+    samples: dict[str, list[float]] = {name: [] for name in operations}
+    statuses: dict[str, list[int]] = {name: [] for name in operations}
+
+    async def one(index: int) -> None:
+        operation = operations[index % len(operations)]
+        started = time.perf_counter()
+        async with sem:
+            if operation in {"keyword", "semantic", "hybrid", "reranked"}:
+                response = await client.post(
+                    f"/collections/{collection}/{operation}-search",
+                    headers=headers["viewer"],
+                    json={"query": "LIFECYCLEALPHA17", "top_k": 5},
+                )
+            elif operation == "ask":
+                response = await client.post(
+                    f"/collections/{collection}/ask",
+                    headers=headers["viewer"],
+                    json={"query": "What is LIFECYCLEALPHA17?", "retrieval_count": 5},
+                )
+            else:
+                created = await client.post(
+                    f"/collections/{collection}/conversations",
+                    headers=headers["viewer"],
+                )
+                if created.status_code != 201:
+                    response = created
+                else:
+                    response = await client.post(
+                        f"/collections/{collection}/conversations/"
+                        f"{created.json()['id']}/messages",
+                        headers={
+                            **headers["viewer"],
+                            "Idempotency-Key": f"m15-load-{index}",
+                        },
+                        json={"query": "What is LIFECYCLEALPHA17?", "top_k": 5},
+                    )
+        samples[operation].append((time.perf_counter() - started) * 1000)
+        statuses[operation].append(response.status_code)
+
+    started = time.perf_counter()
+    await asyncio.gather(*(one(index) for index in range(requests)))
+    elapsed = time.perf_counter() - started
+
+    def percentile(values: list[float], quantile: float) -> float:
+        ordered = sorted(values)
+        return ordered[min(len(ordered) - 1, round((len(ordered) - 1) * quantile))]
+
+    operation_metrics = {}
+    for operation, values in samples.items():
+        operation_metrics[operation] = {
+            "requests": len(values),
+            "expected_2xx": sum(200 <= code < 300 for code in statuses[operation]),
+            "unexpected_errors": sum(code >= 400 for code in statuses[operation]),
+            "p50_ms": round(statistics.median(values), 2),
+            "p95_ms": round(percentile(values, 0.95), 2),
+            "p99_ms": round(percentile(values, 0.99), 2),
+        }
+    return {
+        "environment": "local disposable synthetic fixture; not production capacity",
+        "requests": requests,
+        "concurrency": concurrency,
+        "throughput_rps": round(requests / elapsed, 2),
+        "unexpected_errors": sum(
+            code >= 400 for values in statuses.values() for code in values
+        ),
+        "operations": operation_metrics,
+    }
 
 
 async def seed() -> dict[str, object]:
@@ -413,9 +495,6 @@ async def create_failed_candidate(state: dict[str, object], document_id: UUID) -
         "exec",
         "-T",
         "worker",
-        "uv",
-        "run",
-        "--no-sync",
         "python",
         "-c",
         (
@@ -538,6 +617,10 @@ async def verify(private_key: object) -> dict[str, object]:
                 "latency_ms": answer_one["latency"]["generation_ms"],
             }
         )
+        if os.environ.get("M15_FAKE_PROVIDERS") == "1":
+            metrics["authenticated_load"] = await authenticated_load(
+                client, collection, headers
+            )
 
         conversation = require(
             await client.post(
@@ -980,9 +1063,6 @@ def main() -> None:
             "exec",
             "-T",
             "worker",
-            "uv",
-            "run",
-            "--no-sync",
             "python",
             "-m",
             "app.storage_reconciliation",

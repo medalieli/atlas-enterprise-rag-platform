@@ -5,3 +5,11 @@ __pycache__
 .ruff_cache
 tests
 .env
+.git
+.github
+docs
+data
+*.md
+coverage*
+htmlcov
+pytest-cache-files-*

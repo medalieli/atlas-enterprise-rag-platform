@@ -1,0 +1,43 @@
+name: CI
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  backend:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: pgvector/pgvector@sha256:cf134a767f474095eeba57e0117be8e568e011a63f33fbf252f14c9b760f8e6f
+        env: {POSTGRES_DB: rag_test, POSTGRES_USER: rag_test, POSTGRES_PASSWORD: rag_test}
+        ports: [5432:5432]
+        options: --health-cmd "pg_isready -U rag_test" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql+asyncpg://rag_test:rag_test@localhost:5432/rag_test
+      RUN_DATABASE_TESTS: "1"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: astral-sh/setup-uv@6b9c6063abd6010835644d4c2e1bef4cf5cd0fca
+      - run: cd backend && uv sync --frozen
+      - run: cd backend && uv run ruff check . && uv run python -m compileall -q app tests
+      - run: cd backend && uv run pytest
+      - run: cd backend && uv run alembic upgrade head && uv run alembic current && uv run alembic check
+      - run: cd backend && uv run python scripts/run_evaluation.py
+  frontend:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@1e60f620b9541dca1515400b3102c0b8cee4dff6
+        with: {node-version: 22.22.2, cache: npm, cache-dependency-path: frontend/package-lock.json}
+      - run: cd frontend && npm ci
+      - run: cd frontend && npm run lint && npm run typecheck && npm test && npm run build
+      - run: cd frontend && npx playwright install --with-deps chromium && npm run test:e2e
+  compose:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: docker compose config --quiet

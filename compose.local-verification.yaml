@@ -1,0 +1,13 @@
+# Local-only overlay for trusting an ephemeral verification CA. It does not
+# enable fake providers and must never be used as a public deployment manifest.
+services:
+  frontend:
+    environment:
+      NODE_EXTRA_CA_CERTS: /run/verification-ca/ca.crt
+    volumes:
+      - ${LOCAL_CA_CERT_FILE:?Set LOCAL_CA_CERT_FILE}:/run/verification-ca/ca.crt:ro
+  api:
+    environment:
+      SSL_CERT_FILE: /run/verification-ca/ca.crt
+    volumes:
+      - ${LOCAL_CA_CERT_FILE:?Set LOCAL_CA_CERT_FILE}:/run/verification-ca/ca.crt:ro

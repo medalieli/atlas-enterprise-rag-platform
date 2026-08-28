@@ -367,9 +367,42 @@ class OpenAIAnswerGenerator:
         raise AnswerProviderUnavailableError("Answer provider unavailable")
 
 
+class DeterministicFakeAnswerGenerator:
+    """Test-only grounded generator; it never performs a network request."""
+
+    async def generate(
+        self, question: str, context: AnswerContext
+    ) -> GenerationResult:
+        if not context.sources:
+            answer = GeneratedAnswer(
+                status=AnswerStatus.INSUFFICIENT_CONTEXT,
+                insufficient_reason="No synthetic source matched the question.",
+            )
+        else:
+            source = context.sources[0]
+            answer = GeneratedAnswer(
+                status=AnswerStatus.ANSWERED,
+                claims=[
+                    GeneratedClaim(
+                        text=f"Synthetic grounded result for: {question[:200]}",
+                        source_ids=[source.source_id],
+                    )
+                ],
+            )
+        return GenerationResult(
+            answer=answer,
+            configured_model="fake-grounded-v1",
+            actual_model="fake-grounded-v1",
+            usage=GenerationUsage(0, 0, 0),
+        )
+
+
 @lru_cache
 def get_answer_generator() -> AnswerGenerator:
-    return OpenAIAnswerGenerator(get_settings())
+    settings = get_settings()
+    if settings.answer_provider == "fake":
+        return DeterministicFakeAnswerGenerator()
+    return OpenAIAnswerGenerator(settings)
 
 
 @lru_cache

@@ -7,7 +7,7 @@ dependencies = [
     "alembic>=1.16.5,<2",
     "asyncpg>=0.30.0,<0.31",
     "celery[redis]>=5.5.3,<5.6",
-    "fastapi>=0.116.1,<0.117",
+    "fastapi>=0.116.1,<1",
     "openai>=1.101.0,<2",
     "opentelemetry-api>=1.38.0,<2",
     "opentelemetry-exporter-otlp-proto-http>=1.38.0,<2",
@@ -26,6 +26,7 @@ dependencies = [
     "torch==2.13.0",
     "uvicorn[standard]>=0.35.0,<0.36",
     "pyjwt[crypto]>=2.10.1,<3",
+    "starlette>=1.3.1,<2",
 ]
 
 [tool.uv.sources]
