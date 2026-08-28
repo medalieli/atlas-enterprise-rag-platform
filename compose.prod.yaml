@@ -47,6 +47,7 @@ services:
         BUILD_DATE: ${BUILD_DATE:?Set BUILD_DATE}
     ports: !reset []
     environment:
+      APP_ENV: production
       NODE_ENV: production
       APP_BASE_URL: ${APP_BASE_URL:?Set the public HTTPS origin}
       SESSION_SECRET: !reset null

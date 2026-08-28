@@ -25,6 +25,7 @@ class Issuer(BaseHTTPRequestHandler):
     issuer = ""
     client_id = ""
     client_secret = ""
+    redirect_uri = "https://localhost/api/auth/callback"
     private_key: object
     jwks: dict[str, object]
     codes: dict[str, tuple[str, str, float]] = {}
@@ -68,7 +69,7 @@ class Issuer(BaseHTTPRequestHandler):
             self.send_error(HTTPStatus.BAD_REQUEST)
             return
         redirect = query["redirect_uri"][0]
-        if redirect != "https://localhost/api/auth/callback":
+        if redirect != self.redirect_uri:
             self.send_error(HTTPStatus.BAD_REQUEST)
             return
         code = secrets.token_urlsafe(32)
@@ -120,19 +121,26 @@ def main() -> None:
     parser.add_argument("--signing-key", type=Path, required=True)
     parser.add_argument("--client-secret-file", type=Path, required=True)
     parser.add_argument("--port", type=int, default=9444)
+    parser.add_argument("--insecure-http", action="store_true")
+    parser.add_argument(
+        "--redirect-uri", default="https://localhost/api/auth/callback"
+    )
     args = parser.parse_args()
     private_key = serialization.load_pem_private_key(args.signing_key.read_bytes(), password=None)
     public = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(private_key.public_key()))
     public.update({"kid": "m15", "alg": "RS256", "use": "sig"})
     Issuer.private_key = private_key
     Issuer.jwks = {"keys": [public]}
-    Issuer.issuer = f"https://host.docker.internal:{args.port}"
+    scheme = "http" if args.insecure_http else "https"
+    Issuer.issuer = f"{scheme}://host.docker.internal:{args.port}"
     Issuer.client_id = "m15-local-client"
     Issuer.client_secret = args.client_secret_file.read_text().strip()
+    Issuer.redirect_uri = args.redirect_uri
     server = ThreadingHTTPServer(("0.0.0.0", args.port), Issuer)
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    context.load_cert_chain(args.cert, args.key)
-    server.socket = context.wrap_socket(server.socket, server_side=True)
+    if not args.insecure_http:
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(args.cert, args.key)
+        server.socket = context.wrap_socket(server.socket, server_side=True)
     print("ephemeral_oidc_ready", flush=True)
     server.serve_forever()
 

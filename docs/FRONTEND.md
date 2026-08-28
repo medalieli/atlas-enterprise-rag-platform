@@ -18,6 +18,11 @@ and sends the bearer token to FastAPI over the private service URL.
 
 Configure these server-only values (none use `NEXT_PUBLIC_*`):
 
+- `APP_ENV`: required explicitly by the container entrypoint. Use `development` or
+  `test` only for their corresponding local modes; missing, unknown and production
+  values fail secure in application cookie handling. The production overlay sets
+  `production` and enforces HTTPS, strong session configuration and complete OIDC
+  endpoints before startup.
 - `SESSION_SECRET`: at least 32 random characters; use secret management outside development.
 - `OIDC_AUTHORIZATION_URL` and `OIDC_TOKEN_URL`: external provider endpoints.
 - `APP_BASE_URL`: the externally reachable frontend origin used for OAuth callbacks
@@ -31,6 +36,13 @@ The provider must allow the callback URL
 production). FastAPI remains the authorization authority. UI visibility derives
 from `/auth/me`, but every BFF request is revalidated by authenticated FastAPI
 collection/tenant queries.
+
+The optimized container keeps `NODE_ENV=production` in every deployment. `APP_ENV`
+separately controls deployment security so explicit local HTTP development can omit
+the cookie `Secure` attribute while production always uses the `__Host-rag_session`
+Secure cookie. The repository's `operations/ephemeral_oidc.py` issuer is only a
+synthetic verification utility, is not copied into either application image, and is
+not a production identity provider; production requires configured external OIDC.
 
 ## Local development
 

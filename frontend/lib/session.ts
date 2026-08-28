@@ -1,11 +1,12 @@
 import { cookies } from "next/headers";
 import { EncryptJWT, jwtDecrypt } from "jose";
+import { isSecureRuntime } from "@/lib/runtime";
 
 export type Session = { accessToken: string; refreshToken?: string; expiresAt: number };
-const secure = process.env.NODE_ENV === "production";
+const secure = isSecureRuntime();
 const name = secure ? "__Host-rag_session" : "rag_session";
 const key = () => {
-  const secret = process.env.SESSION_SECRET ?? (process.env.NODE_ENV === "production" ? "" : "development-only-change-me");
+  const secret = process.env.SESSION_SECRET ?? (isSecureRuntime() ? "" : "development-only-change-me");
   if (secret.length < 32) throw new Error("SESSION_SECRET must contain at least 32 characters");
   return new TextEncoder().encode(secret.slice(0, 32));
 };
