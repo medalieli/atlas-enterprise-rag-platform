@@ -2,6 +2,7 @@ import asyncio
 from dataclasses import dataclass
 from enum import StrEnum
 from functools import lru_cache
+from time import perf_counter
 from typing import Annotated, Protocol
 from uuid import UUID
 
@@ -17,6 +18,12 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_vali
 
 from app.core.config import Settings, get_settings
 from app.embeddings import normalize_rate_limit_error
+from app.observability import (
+    PROVIDER_DURATION,
+    PROVIDER_REQUESTS,
+    PROVIDER_TOKENS,
+    configured_model_label,
+)
 
 REWRITER_PROMPT_VERSION = "follow-up-rewriter-v1"
 REWRITER_INSTRUCTIONS = """Classify and, only when necessary, rewrite the current
@@ -143,6 +150,7 @@ class OpenAIFollowUpRewriter:
             for m in history
         )
         attempts = self.settings.rewrite_provider_max_retries + 1
+        started = perf_counter()
         for attempt in range(attempts):
             try:
                 response = await self.client.responses.parse(
@@ -195,6 +203,18 @@ class OpenAIFollowUpRewriter:
                     "invalid_output",
                 )
             usage = response.usage
+            elapsed = perf_counter() - started
+            model_label = configured_model_label(
+                response.model, self.settings.rewrite_model
+            )
+            PROVIDER_REQUESTS.labels("rewrite", "openai", model_label, "none").inc()
+            PROVIDER_DURATION.labels("rewrite", "openai", model_label).observe(elapsed)
+            PROVIDER_TOKENS.labels("rewrite", "openai", model_label, "input").inc(
+                usage.input_tokens if usage else 0
+            )
+            PROVIDER_TOKENS.labels("rewrite", "openai", model_label, "output").inc(
+                usage.output_tokens if usage else 0
+            )
             return RewriteResult(
                 output,
                 self.settings.rewrite_model,

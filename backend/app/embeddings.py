@@ -22,6 +22,7 @@ from openai import (
 )
 
 from app.core.config import Settings
+from app.observability import PROVIDER_DURATION, PROVIDER_REQUESTS, PROVIDER_TOKENS
 
 EMBEDDING_INPUT_VERSION = "embedding-input-v1"
 logger = logging.getLogger("uvicorn.error")
@@ -222,6 +223,12 @@ class OpenAIEmbeddingProvider:
         except RateLimitError as exc:
             metadata = normalize_rate_limit_error(exc)
             _log_provider_error(metadata)
+            PROVIDER_REQUESTS.labels(
+                "embedding",
+                "openai",
+                self.settings.embedding_model,
+                "rate_limit" if metadata.retryable else "quota",
+            ).inc()
             error_type = (
                 TransientEmbeddingError
                 if metadata.retryable
@@ -231,10 +238,16 @@ class OpenAIEmbeddingProvider:
                 "Embedding provider rate limit or quota error", metadata
             ) from exc
         except (APITimeoutError, APIConnectionError, InternalServerError) as exc:
+            PROVIDER_REQUESTS.labels(
+                "embedding", "openai", self.settings.embedding_model, "provider"
+            ).inc()
             raise TransientEmbeddingError(
                 "Embedding provider temporarily unavailable"
             ) from exc
         except (AuthenticationError, PermissionDeniedError, BadRequestError) as exc:
+            PROVIDER_REQUESTS.labels(
+                "embedding", "openai", self.settings.embedding_model, "validation"
+            ).inc()
             raise PermanentEmbeddingError(
                 "Embedding provider rejected the request"
             ) from exc
@@ -243,6 +256,16 @@ class OpenAIEmbeddingProvider:
         if indexes != list(range(len(texts))) or len(data) != len(texts):
             raise PermanentEmbeddingError("Embedding response indexes are invalid")
         usage = getattr(response, "usage", None)
+        elapsed = perf_counter() - started
+        PROVIDER_REQUESTS.labels(
+            "embedding", "openai", self.settings.embedding_model, "none"
+        ).inc()
+        PROVIDER_DURATION.labels(
+            "embedding", "openai", self.settings.embedding_model
+        ).observe(elapsed)
+        PROVIDER_TOKENS.labels(
+            "embedding", "openai", self.settings.embedding_model, "input"
+        ).inc(getattr(usage, "prompt_tokens", 0))
         logger.info(
             "Embedding provider completed model=%s inputs=%s "
             "input_tokens=%s total_tokens=%s latency_ms=%.3f",
@@ -250,7 +273,7 @@ class OpenAIEmbeddingProvider:
             len(texts),
             getattr(usage, "prompt_tokens", 0),
             getattr(usage, "total_tokens", 0),
-            (perf_counter() - started) * 1_000,
+            elapsed * 1_000,
         )
         return [
             validate_vector(item.embedding, self.settings.embedding_dimensions)

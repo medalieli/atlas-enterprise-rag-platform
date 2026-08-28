@@ -22,8 +22,10 @@ GET    /collections/{collection_id}/documents/{document_id}/versions/{version_id
 
 Milestones 10–13 add external OAuth/OIDC access-token validation, internal principals,
 tenant-scoped conversations and document lifecycle management, plus the authenticated
-Next.js frontend. Milestone 14 evaluation/observability and Milestone 15 deployment
-hardening remain explicitly deferred.
+Next.js frontend. Milestone 14 adds versioned deterministic RAG evaluation and an
+opt-in privacy-safe OpenTelemetry/Prometheus/Grafana stack. Milestone 15 deployment
+hardening remains deferred. See
+[`docs/EVALUATION_OBSERVABILITY.md`](docs/EVALUATION_OBSERVABILITY.md).
 
 ## Prerequisites
 

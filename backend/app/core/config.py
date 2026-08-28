@@ -92,6 +92,11 @@ class Settings(BaseSettings):
     chunk_overlap_chars: int = 150
     development_tenant_id: str | None = None
     development_user_id: str | None = None
+    telemetry_enabled: bool = False
+    otel_exporter_otlp_endpoint: str = "http://otel-collector:4318"
+    metrics_enabled: bool = False
+    metrics_bearer_token: SecretStr | None = None
+    service_name: str = "rag-api"
 
     @field_validator("openai_api_key", mode="before")
     @classmethod

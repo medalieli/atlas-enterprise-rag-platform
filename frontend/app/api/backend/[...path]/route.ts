@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 import { clearSession, getSession, setSession } from "@/lib/session";
 import { applicationOrigin } from "@/lib/origin";
+import { bffSpan, injectTrace } from "@/lib/telemetry";
 
 async function refresh(refreshToken: string) {
   const body = new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken, client_id: process.env.OIDC_CLIENT_ID! });
@@ -12,6 +13,7 @@ async function refresh(refreshToken: string) {
   return { accessToken: data.access_token, refreshToken: data.refresh_token ?? refreshToken, expiresAt: Date.now() + (data.expires_in ?? 3600) * 1000 };
 }
 async function handler(request: NextRequest, context: { params: Promise<{ path: string[] }> }) {
+ return bffSpan(async () => {
   let session = await getSession();
   if (!session) return NextResponse.json({ detail: "Session expired" }, { status: 401 });
   if (session.expiresAt < Date.now() + 30000 && session.refreshToken) { session = await refresh(session.refreshToken); if (session) await setSession(session); }
@@ -25,6 +27,7 @@ async function handler(request: NextRequest, context: { params: Promise<{ path: 
   const upstream = new URL(path.join("/"), `${process.env.API_INTERNAL_URL || "http://api:8000"}/`);
   upstream.search = request.nextUrl.search;
   const headers = new Headers(); headers.set("authorization", `Bearer ${session.accessToken}`); headers.set("accept", request.headers.get("accept") || "application/json");
+  injectTrace(headers);
   const contentType = request.headers.get("content-type"); if (contentType) headers.set("content-type", contentType);
   const idempotency = request.headers.get("idempotency-key"); if (idempotency) headers.set("idempotency-key", idempotency);
   const response = await fetch(upstream, { method: request.method, headers, body: ["GET", "HEAD"].includes(request.method) ? undefined : await request.arrayBuffer(), cache: "no-store", redirect: "manual" });
@@ -32,5 +35,6 @@ async function handler(request: NextRequest, context: { params: Promise<{ path: 
   const outHeaders = new Headers(); outHeaders.set("content-type", response.headers.get("content-type") || "application/json"); outHeaders.set("Cache-Control", "private, no-store");
   const disposition = response.headers.get("content-disposition"); if (disposition) outHeaders.set("content-disposition", disposition);
   return new NextResponse(response.body, { status: response.status, headers: outHeaders });
+ });
 }
 export { handler as GET, handler as POST, handler as DELETE, handler as PUT, handler as PATCH };

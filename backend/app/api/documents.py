@@ -20,6 +20,7 @@ from app.db.models import (
 from app.db.session import get_session
 from app.lifecycle import index_configuration
 from app.metadata import MAX_METADATA_JSON_BYTES, DocumentMetadataInput
+from app.observability import INGESTION_QUEUE
 from app.storage import (
     LocalDocumentStorage,
     UploadValidationError,
@@ -178,6 +179,8 @@ async def upload_document(
         # The committed job is durable intent. Reconciliation can publish it
         # after a transient broker outage without losing the stored source.
         _ = exc
+
+    INGESTION_QUEUE.labels("ingestion").inc()
 
     return UploadResponse(
         document_id=document_id,

@@ -37,6 +37,7 @@ from app.db.models import (
 from app.db.session import get_session
 from app.embeddings import EmbeddingProvider
 from app.metadata import MetadataFilter
+from app.observability import ANSWER_STATUS, stage
 from app.reranking import RerankerProvider
 from app.rewriting import (
     FollowUpRewriter,
@@ -469,13 +470,18 @@ async def create_message(
         else:
             if rewriter is None:
                 raise RewriteError("Rewrite provider unavailable")
-            rewrite = await rewriter.rewrite(request.query, history)
+            with stage(
+                "conversation.followup.rewrite",
+                {"rag.operation": "rewrite", "rag.history_messages": len(history)},
+            ):
+                rewrite = await rewriter.rewrite(request.query, history)
             rewrite_status = rewrite.output.status.value
         rewrite_latency_ms = (perf_counter() - rewrite_started) * 1_000
         turn.rewrite_status = rewrite_status
         turn.standalone_question = rewrite.output.standalone_query
         turn.clarification_question = rewrite.output.clarification_question
         if rewrite.output.status == RewriteStatus.CLARIFICATION_REQUIRED:
+            ANSWER_STATUS.labels("clarification_required").inc()
             assistant_content = (
                 rewrite.output.clarification_question or "Clarification required."
             )

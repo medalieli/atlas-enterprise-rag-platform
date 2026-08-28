@@ -19,7 +19,6 @@ from app.answering import (
     build_answer_context,
     generate_bounded,
     get_answer_generator,
-    safe_correlation_id,
     validate_and_resolve_answer,
     validate_usage,
 )
@@ -34,6 +33,17 @@ from app.core.config import get_settings
 from app.db.session import get_session
 from app.embeddings import EmbeddingProvider
 from app.metadata import MetadataFilter, PublicDocumentMetadata
+from app.observability import (
+    ANSWER_STATUS,
+    CITATION_FAILURES,
+    PROVIDER_DURATION,
+    PROVIDER_REQUESTS,
+    PROVIDER_TOKENS,
+    RETRIEVAL_DURATION,
+    configured_model_label,
+    request_id_var,
+    stage,
+)
 from app.reranking import RerankerError, RerankerProvider, rerank_hybrid_candidates
 from app.retrieval import (
     candidate_depth,
@@ -174,32 +184,38 @@ async def ask(
     tenant_id = await authorize_collection(session, principal, collection_id)
     vector = await _embed_query(embedding_provider, request.query)
     depth = candidate_depth(settings.reranker_candidate_limit)
-    semantic = await semantic_candidates(
-        session,
-        tenant_id,
-        collection_id,
-        vector,
-        depth,
-        settings,
-        request.filters,
-    )
-    keyword = await keyword_candidates(
-        session,
-        tenant_id,
-        collection_id,
-        request.query,
-        depth,
-        request.filters,
-    )
-    fused = reciprocal_rank_fusion(semantic, keyword, settings.reranker_candidate_limit)
-    try:
-        reranked = await rerank_hybrid_candidates(
-            request.query,
-            fused,
-            request.retrieval_count,
-            reranker,
-            settings.reranker_timeout_seconds,
+    with stage("retrieval.semantic.candidates", {"rag.mode": "semantic"}):
+        semantic = await semantic_candidates(
+            session,
+            tenant_id,
+            collection_id,
+            vector,
+            depth,
+            settings,
+            request.filters,
         )
+    with stage("retrieval.keyword.candidates", {"rag.mode": "keyword"}):
+        keyword = await keyword_candidates(
+            session,
+            tenant_id,
+            collection_id,
+            request.query,
+            depth,
+            request.filters,
+        )
+    with stage("retrieval.hybrid.fusion", {"rag.mode": "hybrid"}):
+        fused = reciprocal_rank_fusion(
+            semantic, keyword, settings.reranker_candidate_limit
+        )
+    try:
+        with stage("retrieval.rerank", {"rag.mode": "reranked"}):
+            reranked = await rerank_hybrid_candidates(
+                request.query,
+                fused,
+                request.retrieval_count,
+                reranker,
+                settings.reranker_timeout_seconds,
+            )
     except RerankerError as exc:
         raise HTTPException(status_code=503, detail="Reranker unavailable") from exc
     context = build_answer_context(reranked, tenant_id, collection_id, settings)
@@ -212,31 +228,43 @@ async def ask(
             f"Validated standalone retrieval interpretation:\n{request.query}"
         )
     try:
-        generated = (
-            _empty_generation(settings.answer_model, original_question or request.query)
-            if not context.sources
-            else await generate_bounded(
-                answer_generator,
-                generation_question,
-                context,
-                settings.answer_provider_timeout_seconds,
+        with stage("answer.generate", {"rag.operation": "answer"}):
+            generated = (
+                _empty_generation(
+                    settings.answer_model, original_question or request.query
+                )
+                if not context.sources
+                else await generate_bounded(
+                    answer_generator,
+                    generation_question,
+                    context,
+                    settings.answer_provider_timeout_seconds,
+                )
+                if answer_generator is not None
+                else _raise_answer_provider_unavailable()
             )
-            if answer_generator is not None
-            else _raise_answer_provider_unavailable()
-        )
         validate_usage(generated.usage)
-        validated = await validate_and_resolve_answer(
-            session,
-            generated.answer,
-            context,
-            tenant_id,
-            collection_id,
-            settings,
-        )
+        with stage("answer.citations.validate", {"rag.operation": "answer"}):
+            validated = await validate_and_resolve_answer(
+                session,
+                generated.answer,
+                context,
+                tenant_id,
+                collection_id,
+                settings,
+            )
     except (AnswerGenerationError, AnswerValidationError) as exc:
+        category = (
+            "provider" if isinstance(exc, AnswerGenerationError) else "validation"
+        )
+        PROVIDER_REQUESTS.labels(
+            "answer", "openai", get_settings().answer_model, category
+        ).inc()
+        if isinstance(exc, AnswerValidationError):
+            CITATION_FAILURES.labels("validation").inc()
         logger.warning(
             "Answer request failed correlation_id=%s category=%s",
-            safe_correlation_id(tenant_id, collection_id),
+            request_id_var.get(),
             getattr(exc, "category", type(exc).__name__),
         )
         raise HTTPException(
@@ -292,11 +320,24 @@ async def ask(
             total_ms=total_ms,
         ),
     )
+    RETRIEVAL_DURATION.labels("reranked").observe(retrieval_ms / 1000)
+    model_label = configured_model_label(generated.actual_model, settings.answer_model)
+    PROVIDER_REQUESTS.labels("answer", "openai", model_label, "none").inc()
+    PROVIDER_DURATION.labels("answer", "openai", model_label).observe(
+        generation_ms / 1000
+    )
+    PROVIDER_TOKENS.labels("answer", "openai", model_label, "input").inc(
+        generated.usage.input_tokens
+    )
+    PROVIDER_TOKENS.labels("answer", "openai", model_label, "output").inc(
+        generated.usage.output_tokens
+    )
+    ANSWER_STATUS.labels(validated.status.value).inc()
     logger.info(
         "Answer completed correlation_id=%s model=%s candidates=%s context=%s "
         "citations=%s input_tokens=%s output_tokens=%s retrieval_ms=%.3f "
         "generation_ms=%.3f total_ms=%.3f",
-        safe_correlation_id(tenant_id, collection_id),
+        request_id_var.get(),
         generated.actual_model,
         len(fused),
         len(context.sources),

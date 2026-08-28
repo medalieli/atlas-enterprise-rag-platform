@@ -27,6 +27,7 @@ from app.metadata import (
     PublicDocumentMetadata,
     public_document_metadata,
 )
+from app.observability import RETRIEVAL_DURATION, RETRIEVAL_RESULTS, stage
 from app.reranking import (
     RerankedCandidate,
     RerankerError,
@@ -189,9 +190,10 @@ async def authorize_collection(
 async def _embed_query(provider: EmbeddingProvider, query: str) -> list[float]:
     settings = get_settings()
     try:
-        return validate_vector(
-            await provider.embed_query(query), settings.embedding_dimensions
-        )
+        with stage("provider.embedding.request", {"rag.operation": "embedding"}):
+            return validate_vector(
+                await provider.embed_query(query), settings.embedding_dimensions
+            )
     except EmbeddingConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except TransientEmbeddingError as exc:
@@ -303,6 +305,9 @@ def _log_retrieval(
     semantic_count: int = 0,
     keyword_count: int = 0,
 ) -> None:
+    elapsed = perf_counter() - started
+    RETRIEVAL_DURATION.labels(mode).observe(elapsed)
+    RETRIEVAL_RESULTS.labels(mode).observe(result_count)
     logger.info(
         "Retrieval completed mode=%s semantic_candidates=%s "
         "keyword_candidates=%s results=%s total_ms=%.3f",
@@ -310,7 +315,7 @@ def _log_retrieval(
         semantic_count,
         keyword_count,
         result_count,
-        (perf_counter() - started) * 1000,
+        elapsed * 1000,
     )
 
 
@@ -468,6 +473,8 @@ async def reranked_search(
     except RerankerError as exc:
         raise HTTPException(status_code=503, detail="Reranker unavailable") from exc
     reranker_ms = (perf_counter() - reranker_started) * 1000
+    RETRIEVAL_DURATION.labels("reranked").observe(reranker_ms / 1000)
+    RETRIEVAL_RESULTS.labels("reranked").observe(len(results))
     logger.info(
         "Reranking completed candidates=%s batches=%s results=%s "
         "retrieval_ms=%.3f reranker_ms=%.3f total_ms=%.3f",

@@ -35,6 +35,7 @@ from app.db.models import (
 from app.db.session import get_session
 from app.lifecycle import index_configuration
 from app.metadata import MAX_METADATA_JSON_BYTES, DocumentMetadataInput
+from app.observability import INGESTION_QUEUE, LIFECYCLE, stage
 from app.storage import (
     LocalDocumentStorage,
     UploadValidationError,
@@ -314,11 +315,14 @@ async def replace_document(
         await storage.delete(key)
         raise
     try:
-        verify_original_task.apply_async(
-            args=[str(document.tenant_id), str(document.id), str(job_id)]
-        )
+        with stage("lifecycle.replacement.enqueue", {"rag.operation": "replacement"}):
+            verify_original_task.apply_async(
+                args=[str(document.tenant_id), str(document.id), str(job_id)]
+            )
     except Exception:
         pass  # durable queued intent is recovered by reconciliation
+    INGESTION_QUEUE.labels("replacement").inc()
+    LIFECYCLE.labels("replacement", "succeeded").inc()
     return LifecycleAccepted(
         document_id=document.id,
         version_id=version_id,
@@ -448,11 +452,14 @@ async def reindex_document(
     session.add(job)
     await session.commit()
     try:
-        verify_original_task.apply_async(
-            args=[str(locked.tenant_id), str(locked.id), str(job_id)]
-        )
+        with stage("lifecycle.reindex.enqueue", {"rag.operation": "reindex"}):
+            verify_original_task.apply_async(
+                args=[str(locked.tenant_id), str(locked.id), str(job_id)]
+            )
     except Exception:
         pass
+    INGESTION_QUEUE.labels("reindex").inc()
+    LIFECYCLE.labels("reindex", "succeeded").inc()
     return LifecycleAccepted(
         document_id=locked.id,
         version_id=version.id,
@@ -514,6 +521,7 @@ async def delete_document(
         )
     except Exception:
         pass
+    INGESTION_QUEUE.labels("deletion").inc()
     return LifecycleAccepted(
         document_id=locked.id, job_id=job.id, processing_status="queued"
     )

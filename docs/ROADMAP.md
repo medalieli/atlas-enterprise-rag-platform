@@ -1,6 +1,6 @@
 # Project Roadmap
 
-Statuses: **Milestones 1–13 — completed.** Milestones 14–15 — pending.
+Statuses: **Milestones 1–14 — completed.** Milestone 15 — pending.
 
 ## 1. Repository foundation — Completed
 
@@ -80,7 +80,7 @@ Statuses: **Milestones 1–13 — completed.** Milestones 14–15 — pending.
 
 **Acceptance criteria:** Core flows work against the real API; processing and error states are accessible; citations open the correct authorized PDF page or best source location; no security scope is trusted from client state.
 
-## 14. RAG evaluation, testing and observability — Pending
+## 14. RAG evaluation, testing and observability — Complete
 
 **Goal:** Make quality, reliability, and failures measurable and reproducible.
 

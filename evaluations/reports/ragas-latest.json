@@ -1,0 +1,99 @@
+{
+  "schema_version": "1.0",
+  "kind": "ragas-deterministic-supplement",
+  "dataset_version": "2026.08.1",
+  "dataset_sha256": "df919658e1d0f2b4ebaf3669d30c87bebeb68702a5ca37c58b9be907e0a8f0da",
+  "generated_at": "2026-08-28T00:09:04.199566+00:00",
+  "provider_calls": 0,
+  "llm_judge": "disabled",
+  "metrics": {
+    "context_precision": 0.9999999999149999,
+    "context_recall": 1.0
+  },
+  "cases": [
+    {
+      "id": "dev-en-exact",
+      "split": "development",
+      "context_precision": 0.9999999999,
+      "context_recall": 1.0
+    },
+    {
+      "id": "dev-fr-semantic",
+      "split": "development",
+      "context_precision": 0.9999999999,
+      "context_recall": 1.0
+    },
+    {
+      "id": "dev-keyword-quote",
+      "split": "development",
+      "context_precision": 0.9999999999,
+      "context_recall": 1.0
+    },
+    {
+      "id": "dev-filter",
+      "split": "development",
+      "context_precision": 0.9999999999,
+      "context_recall": 1.0
+    },
+    {
+      "id": "dev-multi-source",
+      "split": "development",
+      "context_precision": 0.99999999995,
+      "context_recall": 1.0
+    },
+    {
+      "id": "dev-insufficient",
+      "split": "development",
+      "context_precision": null,
+      "context_recall": null
+    },
+    {
+      "id": "dev-conflict",
+      "split": "development",
+      "context_precision": 0.99999999995,
+      "context_recall": 1.0
+    },
+    {
+      "id": "dev-followup",
+      "split": "development",
+      "context_precision": 0.9999999999,
+      "context_recall": 1.0
+    },
+    {
+      "id": "dev-clarify",
+      "split": "development",
+      "context_precision": null,
+      "context_recall": null
+    },
+    {
+      "id": "heldout-injection",
+      "split": "heldout",
+      "context_precision": 0.9999999999,
+      "context_recall": 1.0
+    },
+    {
+      "id": "heldout-stale",
+      "split": "heldout",
+      "context_precision": 0.9999999999,
+      "context_recall": 1.0
+    },
+    {
+      "id": "heldout-deleted",
+      "split": "heldout",
+      "context_precision": null,
+      "context_recall": null
+    },
+    {
+      "id": "heldout-tenant-isolation",
+      "split": "heldout",
+      "context_precision": null,
+      "context_recall": null
+    },
+    {
+      "id": "heldout-fr-conflict",
+      "split": "heldout",
+      "context_precision": 0.99999999995,
+      "context_recall": 1.0
+    }
+  ]
+}

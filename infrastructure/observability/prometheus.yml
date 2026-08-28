@@ -1,0 +1,10 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+scrape_configs:
+  - job_name: rag-api
+    metrics_path: /internal/metrics
+    authorization:
+      credentials: local-observability-token
+    static_configs:
+      - targets: ["api:8000"]

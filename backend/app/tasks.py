@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import logging
 import secrets
 from datetime import UTC, datetime
 from uuid import UUID
@@ -40,6 +41,13 @@ from app.ingestion.chunking import (
 )
 from app.ingestion.cleaning import CLEANER_VERSION, clean_source_unit
 from app.ingestion.parsers import ParserLimits, PermanentParserError, parse_document
+from app.observability import (
+    INGESTION_DURATION,
+    INGESTION_JOBS,
+    INGESTION_QUEUE,
+    LIFECYCLE,
+    stage,
+)
 from app.storage import LocalDocumentStorage
 from app.worker import celery_app
 
@@ -50,6 +58,7 @@ SAFE_RETRY_EXHAUSTED = "Ingestion failed after retry limit"
 SAFE_EMBEDDING = "Document embeddings could not be generated safely"
 MAX_TOTAL_RETRY_DELAY_SECONDS = 120
 SAFE_DELETE_TRANSIENT = "Temporary storage cleanup failure; retry scheduled"
+logger = logging.getLogger("rag")
 
 
 class TransientIngestionError(Exception):
@@ -216,6 +225,13 @@ async def process_job(
                     return "missing"
                 if job.status == ProcessingJobStatus.SUCCEEDED:
                     return "already-complete"
+                if job.status == ProcessingJobStatus.QUEUED:
+                    queue_operation = {
+                        "initial_ingestion": "ingestion",
+                        "replacement_ingestion": "replacement",
+                        "reindex": "reindex",
+                    }.get(job.operation, "ingestion")
+                    INGESTION_QUEUE.labels(queue_operation).dec()
                 job.status = ProcessingJobStatus.RUNNING
                 job.attempt_count += 1
                 job.started_at = datetime.now(UTC)
@@ -234,22 +250,28 @@ async def process_job(
                 version_id, generation_id = version.id, generation.id
 
             try:
-                if not await storage.verify(storage_key, checksum):
+                with stage("storage.source.verify", {"rag.operation": "ingestion"}):
+                    verified = await storage.verify(storage_key, checksum)
+                if not verified:
                     await _mark_failed(tenant_id, document_id, job_id, SAFE_MISSING)
                     return "failed"
-                parsed = parse_document(
-                    storage.path_for_validation(storage_key),
-                    content_type,
-                    _limits(settings),
-                )
-                cleaned = tuple(clean_source_unit(unit) for unit in parsed.source_units)
-                config = _chunk_config(settings)
-                fingerprint = pipeline_fingerprint(parsed.parser_version, config)
-                candidates = tuple(
-                    candidate
-                    for unit in cleaned
-                    for candidate in chunk_source_unit(unit, config)
-                )
+                with stage("ingestion.parse", {"rag.operation": "ingestion"}):
+                    parsed = parse_document(
+                        storage.path_for_validation(storage_key),
+                        content_type,
+                        _limits(settings),
+                    )
+                with stage("ingestion.clean_chunk", {"rag.operation": "ingestion"}):
+                    cleaned = tuple(
+                        clean_source_unit(unit) for unit in parsed.source_units
+                    )
+                    config = _chunk_config(settings)
+                    fingerprint = pipeline_fingerprint(parsed.parser_version, config)
+                    candidates = tuple(
+                        candidate
+                        for unit in cleaned
+                        for candidate in chunk_source_unit(unit, config)
+                    )
                 if not candidates:
                     raise PermanentParserError("Document has no usable normalized text")
             except PermanentParserError:
@@ -271,7 +293,11 @@ async def process_job(
                     )
                     for candidate in candidates
                 ]
-                vectors = await provider.embed_documents(inputs)
+                with stage(
+                    "provider.embedding.request",
+                    {"rag.operation": "embedding", "rag.input_count": len(inputs)},
+                ):
+                    vectors = await provider.embed_documents(inputs)
                 if len(vectors) != len(candidates):
                     raise PermanentEmbeddingError("Embedding response count mismatch")
             except TransientEmbeddingError as exc:
@@ -472,6 +498,8 @@ async def process_deletion(tenant_id: UUID, document_id: UUID, job_id: UUID) -> 
             return "stale"
         if job.status == ProcessingJobStatus.SUCCEEDED:
             return "already-complete"
+        if job.status == ProcessingJobStatus.QUEUED:
+            INGESTION_QUEUE.labels("deletion").dec()
         job.status = ProcessingJobStatus.RUNNING
         job.attempt_count += 1
         job.started_at = datetime.now(UTC)
@@ -591,9 +619,25 @@ def run_async(coroutine: object) -> object:
 def verify_original_task(
     self: Task, tenant_id: str, document_id: str, job_id: str
 ) -> str:
+    started = datetime.now(UTC)
     tenant_uuid, document_uuid, job_uuid = map(UUID, (tenant_id, document_id, job_id))
     try:
-        return str(run_async(process_job(tenant_uuid, document_uuid, job_uuid)))
+        with stage(
+            "ingestion.job.execute",
+            {"rag.operation": "ingestion", "rag.retry_count": self.request.retries},
+        ):
+            result = str(run_async(process_job(tenant_uuid, document_uuid, job_uuid)))
+        outcome = (
+            result
+            if result in {"succeeded", "failed", "retrying", "cancelled"}
+            else "succeeded"
+        )
+        INGESTION_JOBS.labels("ingestion", outcome).inc()
+        INGESTION_DURATION.labels("ingestion").observe(
+            (datetime.now(UTC) - started).total_seconds()
+        )
+        logger.info("Ingestion job completed operation=ingestion outcome=%s", outcome)
+        return result
     except (TransientIngestionError, SQLAlchemyError) as exc:
         settings = get_settings()
         if self.request.retries >= settings.celery_max_retries:
@@ -624,9 +668,24 @@ def verify_original_task(
 def delete_document_task(
     self: Task, tenant_id: str, document_id: str, job_id: str
 ) -> str:
+    started = datetime.now(UTC)
     tenant_uuid, document_uuid, job_uuid = map(UUID, (tenant_id, document_id, job_id))
     try:
-        return str(run_async(process_deletion(tenant_uuid, document_uuid, job_uuid)))
+        with stage(
+            "lifecycle.deletion.execute",
+            {"rag.operation": "deletion", "rag.retry_count": self.request.retries},
+        ):
+            result = str(
+                run_async(process_deletion(tenant_uuid, document_uuid, job_uuid))
+            )
+        LIFECYCLE.labels(
+            "deletion", "succeeded" if result == "succeeded" else "failed"
+        ).inc()
+        INGESTION_DURATION.labels("deletion").observe(
+            (datetime.now(UTC) - started).total_seconds()
+        )
+        logger.info("Lifecycle job completed operation=deletion outcome=%s", result)
+        return result
     except (TransientIngestionError, SQLAlchemyError) as exc:
         settings = get_settings()
         if self.request.retries >= settings.celery_max_retries:
