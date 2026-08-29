@@ -7,12 +7,15 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import Permission, TrustedPrincipal, get_trusted_principal, has_permission
+from app.auth import (
+    CollectionPermission,
+    TrustedPrincipal,
+    get_trusted_principal,
+    require_collection_permission,
+)
 from app.core.config import get_settings
-from app.db.models import Collection, Membership
 from app.db.session import get_session
 from app.embeddings import (
     EmbeddingConfigurationError,
@@ -165,25 +168,9 @@ async def authorize_collection(
     principal: TrustedPrincipal,
     collection_id: UUID,
 ) -> UUID:
-    row = (
-        await session.execute(
-            select(Collection.tenant_id, Membership.role)
-            .join(
-                Membership,
-                (Membership.tenant_id == Collection.tenant_id)
-                & (Membership.user_id == principal.user_id),
-            )
-            .where(
-                Collection.id == collection_id,
-                Membership.enabled.is_(True),
-            )
-        )
-    ).one_or_none()
-    if row is None:
-        raise HTTPException(status_code=404, detail="Collection not found")
-    tenant_id, role = row
-    if not has_permission(role, Permission.READ):
-        raise HTTPException(status_code=403, detail="Permission denied")
+    tenant_id, _, _ = await require_collection_permission(
+        session, principal.user_id, collection_id, CollectionPermission.READ
+    )
     return tenant_id
 
 

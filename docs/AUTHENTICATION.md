@@ -48,11 +48,16 @@ multiple memberships must explicitly select a tenant for collection listing or
 creation; resource-ID endpoints derive the tenant by joining the resource to the
 principal's enabled membership.
 
-| Role | Read jobs/documents, retrieve, ask | Upload documents | Create collections |
-| --- | --- | --- | --- |
-| `viewer` | Yes | No | No |
-| `editor` | Yes | Yes | No |
-| `admin` | Yes | Yes | Yes |
+Database membership is the application-authorization source of truth. Every request
+rechecks active membership and collection grants, so suspension, revocation and
+role changes take effect on the next request rather than waiting for JWT expiry.
+Organization roles are `owner`, `admin` and deny-by-default `member`. Collection
+grants are `manager`, `editor` and `viewer`; owners/admins implicitly manage every
+collection. The exact matrices and invitation flow are documented in
+[`POST_V1_ENTERPRISE_UPGRADE.md`](POST_V1_ENTERPRISE_UPGRADE.md).
+
+Atlas never creates or stores passwords and provides no password-reset or MFA
+workflow. Those controls remain exclusively with the configured OIDC provider.
 
 Permissions are centralized as `tenant:read`, `document:upload` and
 `collection:manage`. Unknown/missing resources and cross-tenant resources return the

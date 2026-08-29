@@ -15,7 +15,7 @@ from app.auth import (
     has_permission,
 )
 from app.core.config import Settings
-from app.db.models import MembershipRole
+from app.db.models import CollectionRole, MembershipRole
 from app.main import app
 
 ISSUER = "https://issuer.example.test"
@@ -286,11 +286,14 @@ async def test_jwks_cache_hit_avoids_network(key_pair: tuple) -> None:
 
 
 def test_role_permission_matrix_is_least_privilege() -> None:
-    assert has_permission(MembershipRole.VIEWER, Permission.READ)
-    assert not has_permission(MembershipRole.VIEWER, Permission.UPLOAD)
-    assert has_permission(MembershipRole.EDITOR, Permission.UPLOAD)
-    assert not has_permission(MembershipRole.EDITOR, Permission.MANAGE_COLLECTIONS)
+    assert has_permission(CollectionRole.VIEWER, Permission.READ)
+    assert not has_permission(CollectionRole.VIEWER, Permission.UPLOAD)
+    assert has_permission(CollectionRole.EDITOR, Permission.UPLOAD)
+    assert not has_permission(CollectionRole.EDITOR, Permission.MANAGE_COLLECTIONS)
+    assert has_permission(CollectionRole.MANAGER, Permission.DELETE_DOCUMENT)
+    assert not has_permission(MembershipRole.MEMBER, Permission.UPLOAD)
     assert has_permission(MembershipRole.ADMIN, Permission.MANAGE_COLLECTIONS)
+    assert has_permission(MembershipRole.OWNER, Permission.MANAGE_MEMBERS)
 
 
 def test_authentication_configuration_fails_closed() -> None:

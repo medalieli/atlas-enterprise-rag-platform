@@ -11,3 +11,10 @@ This is a curated synthetic mockup, not a live-deployment screenshot. It uses fi
 0:00–0:20 — business problem and authenticated shell. 0:20–0:40 — synthetic PDF upload and queued/processing/ready states. 0:40–1:05 — keyword versus semantic versus hybrid/reranked fixture results. 1:05–1:30 — grounded answer and exact cited PDF page. 1:30–1:45 — follow-up with renewed authorization. 1:45–2:05 — replace/reindex, active/superseded versions and tombstones. 2:05–2:25 — synthetic tenant denial and OIDC/BFF boundary. 2:25–2:40 — fixture evaluation and observability. 2:40–3:00 — architecture/trust boundaries, production overlay, CI gates and recovery; state that no public URL exists until prerequisites are supplied.
 
 Technology decisions: PostgreSQL/pgvector keeps lexical/vector/relational scope together; Celery/Redis separates bounded ingestion; the storage abstraction preserves originals; FastAPI owns authorization; Next.js is a BFF; plain Python preserves deterministic orchestration. Mohammed Ali will record the walkthrough; no recorded-video or live-link claim is made.
+
+The post-v1 portfolio tour additionally demonstrates organization membership,
+single-use invitations, collection manager/editor/viewer permissions, safe audit
+activity, privacy-preserving aggregate analytics, answer feedback, and deterministic
+English/French/Arabic greeting and empty-collection guidance. These are application
+authorization features layered behind OIDC; Atlas still stores no passwords and no
+public deployment or live URL is claimed.

@@ -84,3 +84,26 @@ ZAP 2.17.0 was pinned to `sha256:781a2b...081ef`. Its Java trust store imported 
 `pg_dump` custom format was 368,834 bytes; source objects were 1,619,855 bytes across 51 files. Backup took 1.808 s and restore 3.822 s. The disposable restore contained 27 tenants, 39 collections, 48 documents, versions and active generations, 52 chunks/embeddings, 9 conversations and 12 citations. Object manifest hashes, lifecycle/tombstone state and tenant keys matched. Authorized fake-provider retrieval/grounded-answer behavior was separately verified against the same fixture model and isolation assertions. The disposable target was removed; the working database was never overwritten.
 
 Residual risks are the vendor-deferred unreachable image findings, inline CSP bootstrap allowance, local-only performance sample, untested public-platform integration and normal third-party provider availability/cost. These are limitations, not unsupported production guarantees.
+
+## Post-v1 enterprise verification
+
+The enterprise upgrade is verified separately from the completed 15-milestone
+roadmap. The final local run passed 187 backend tests against PostgreSQL/pgvector,
+19 frontend unit tests, and eight Playwright desktop/mobile scenarios. Ruff, Python
+compilation, ESLint, strict TypeScript, the production frontend build, frozen locks,
+Compose validation, and a 14-case deterministic evaluation (zero provider calls)
+passed. Revision `d4e5f6a7b8c9` passed current/check, downgrade, upgrade, and repeated
+upgrade on the disposable production-like database.
+
+Both final application images built and all ten hardened production-overlay services
+became healthy. Only the HTTPS proxy published ports; ephemeral RS256 OIDC login with
+PKCE reached `/chat`, the BFF resolved the synthetic owner, the session cookie was
+Secure/HttpOnly/SameSite, CSRF-less logout was rejected, and CSRF-protected logout
+succeeded. Trivy 0.65.0 with its 2026-08-29 database reported zero fixable high or
+critical OS/application findings in both images. NPM audit reported zero production
+dependency findings. Bandit reported zero medium/high findings and seven low
+heuristics (three deliberate durable-queue recovery catches, a fixed-argument Git
+metadata subprocess, and a verification-only assert). Gitleaks' history scan retained
+one previously documented false positive: an immutable image digest in the Milestone
+15 smoke script, not a credential; the feature introduced no secret. No paid OpenAI
+call or public deployment was performed.

@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.enterprise import business_audit_event
 from app.auth import (
     ROLE_PERMISSIONS,
     Permission,
@@ -13,7 +14,7 @@ from app.auth import (
     get_trusted_principal,
     require_membership,
 )
-from app.db.models import Collection, Membership
+from app.db.models import Collection, CollectionGrant, Membership, MembershipRole
 from app.db.session import get_session
 
 router = APIRouter(tags=["identity and collections"])
@@ -23,6 +24,8 @@ class MembershipResponse(BaseModel):
     tenant_id: UUID
     role: str
     permissions: list[str]
+    status: str
+    version: int
 
 
 class IdentityResponse(BaseModel):
@@ -43,6 +46,7 @@ class CollectionResponse(BaseModel):
     tenant_id: UUID
     name: str
     description: str | None
+    access_role: str
 
 
 @router.get("/auth/me", response_model=IdentityResponse)
@@ -69,6 +73,8 @@ async def me(
                 permissions=sorted(
                     permission.value for permission in ROLE_PERMISSIONS[item.role]
                 ),
+                status=item.status,
+                version=item.version,
             )
             for item in memberships
         ],
@@ -81,20 +87,37 @@ async def list_collections(
     principal: Annotated[TrustedPrincipal, Depends(get_trusted_principal)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> list[CollectionResponse]:
-    await require_membership(session, principal.user_id, tenant_id, Permission.READ)
-    rows = (
-        await session.scalars(
-            select(Collection)
-            .where(Collection.tenant_id == tenant_id)
-            .order_by(Collection.name, Collection.id)
-        )
-    ).all()
+    membership = await require_membership(
+        session, principal.user_id, tenant_id, Permission.READ
+    )
+    query = select(Collection).where(Collection.tenant_id == tenant_id)
+    if membership.role == MembershipRole.MEMBER:
+        query = query.join(
+            CollectionGrant,
+            (CollectionGrant.collection_id == Collection.id)
+            & (CollectionGrant.tenant_id == Collection.tenant_id),
+        ).where(CollectionGrant.membership_id == membership.id)
+    rows = (await session.scalars(query.order_by(Collection.name, Collection.id))).all()
+    grant_roles = dict(
+        (
+            await session.execute(
+                select(CollectionGrant.collection_id, CollectionGrant.role).where(
+                    CollectionGrant.membership_id == membership.id
+                )
+            )
+        ).all()
+    )
     return [
         CollectionResponse(
             id=item.id,
             tenant_id=item.tenant_id,
             name=item.name,
             description=item.description,
+            access_role=(
+                "manager"
+                if membership.role in {MembershipRole.OWNER, MembershipRole.ADMIN}
+                else grant_roles[item.id].value
+            ),
         )
         for item in rows
     ]
@@ -110,7 +133,7 @@ async def create_collection(
     principal: Annotated[TrustedPrincipal, Depends(get_trusted_principal)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> CollectionResponse:
-    await require_membership(
+    membership = await require_membership(
         session,
         principal.user_id,
         request.tenant_id,
@@ -130,6 +153,17 @@ async def create_collection(
         description=request.description,
     )
     session.add(collection)
+    await session.flush()
+    session.add(
+        business_audit_event(
+            request.tenant_id,
+            principal.user_id,
+            membership.role.value,
+            "collection.created",
+            "collection",
+            collection.id,
+        )
+    )
     await session.commit()
     await session.refresh(collection)
     return CollectionResponse(
@@ -137,4 +171,5 @@ async def create_collection(
         tenant_id=collection.tenant_id,
         name=collection.name,
         description=collection.description,
+        access_role="manager",
     )

@@ -96,5 +96,9 @@ desktop and mobile login/session states, document lifecycle, ingestion, chat,
 follow-up answers, citations, navigation and automated axe accessibility checks.
 Synthetic screenshots are written under ignored `frontend/qa/` for local visual QA.
 
-Milestone 14 evaluation/observability and Milestone 15 deployment hardening remain
-explicitly deferred.
+The post-v1 enterprise upgrade adds responsive Members, Invitations, Audit Activity,
+and Product Analytics pages for owners/admins. Collection roles hide unavailable
+upload, lifecycle, and grant controls for usability, while the API remains
+authoritative. Eligible assistant answers expose accessible helpful/not-helpful
+controls. Greeting-only turns and empty collections render deterministic guidance
+without citations or provider calls. See `POST_V1_ENTERPRISE_UPGRADE.md`.

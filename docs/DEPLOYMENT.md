@@ -10,6 +10,13 @@ Create separate root-readable files outside the repository for the database URL,
 
 Validate with `operations/verify-compose.ps1`, build/tag the exact revision, and run migrations once with `docker compose ... run --rm --no-deps api alembic upgrade head` before scaling API/worker. Confirm `current` and `check`, start, then perform authenticated synthetic smoke tests. Health endpoints check process/PostgreSQL/pgvector only and never call OpenAI.
 
+For revision `d4e5f6a7b8c9`, back up PostgreSQL before migration. The upgrade
+preserves legacy administrator access as `owner` and converts legacy reader/editor
+roles into explicit per-collection grants. Review the backfill counts before serving
+traffic. `INVITATION_EXPIRATION_HOURS` may be set from 1 through 168 (default 72).
+Copy-link invitation delivery is suitable only for a controlled administrative
+channel; production email delivery remains an integration concern.
+
 Rollback application images with prior immutable references. Do not automatically downgrade schema. On a failed transactional migration, keep the old application running, inspect the revision/logs, correct and retry. Restore the coordinated pre-deployment backup into an isolated target if data changed incompatibly. Lifecycle downgrades may refuse when multiple versions exist; never force destructive rollback.
 
 Set `PRODUCTION_HOSTNAME` to the single public hostname, without a scheme; unknown Host values are rejected. HSTS is emitted only by HTTPS. The proxy overwrites forwarding headers, limits uploads to 21 MiB, and applies bounded timeouts/connections/rates with `429` responses. Permanent provider quota remains a distinct application error. CSP retains only the tested Next.js `unsafe-inline` bootstrap allowance; `unsafe-eval` is prohibited and removing the final inline allowance requires a nonce/hash migration. PDF ranges and DOCX citation links pass through unchanged.

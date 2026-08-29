@@ -18,8 +18,17 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
-from app.db.models import Membership, MembershipRole, User
+from app.db.models import (
+    AuditEvent,
+    Collection,
+    CollectionGrant,
+    CollectionRole,
+    Membership,
+    MembershipRole,
+    User,
+)
 from app.db.session import get_session
+from app.observability import request_id_var
 
 logger = logging.getLogger("uvicorn.error")
 bearer_scheme = HTTPBearer(
@@ -35,13 +44,13 @@ class Permission(StrEnum):
     REINDEX = "document:reindex"
     DELETE_DOCUMENT = "document:delete"
     MANAGE_COLLECTIONS = "collection:manage"
+    MANAGE_MEMBERS = "member:manage"
+    VIEW_AUDIT = "audit:read"
+    VIEW_ANALYTICS = "analytics:read"
 
 
 ROLE_PERMISSIONS: dict[MembershipRole, frozenset[Permission]] = {
-    MembershipRole.VIEWER: frozenset({Permission.READ}),
-    MembershipRole.EDITOR: frozenset(
-        {Permission.READ, Permission.UPLOAD, Permission.REINDEX}
-    ),
+    MembershipRole.MEMBER: frozenset({Permission.READ}),
     MembershipRole.ADMIN: frozenset(
         {
             Permission.READ,
@@ -49,8 +58,33 @@ ROLE_PERMISSIONS: dict[MembershipRole, frozenset[Permission]] = {
             Permission.REINDEX,
             Permission.DELETE_DOCUMENT,
             Permission.MANAGE_COLLECTIONS,
+            Permission.MANAGE_MEMBERS,
+            Permission.VIEW_AUDIT,
+            Permission.VIEW_ANALYTICS,
         }
     ),
+    MembershipRole.OWNER: frozenset(set(Permission)),
+}
+
+
+class CollectionPermission(StrEnum):
+    READ = "read"
+    UPLOAD = "upload"
+    REINDEX = "reindex"
+    DELETE = "delete"
+    MANAGE_GRANTS = "manage_grants"
+
+
+COLLECTION_ROLE_PERMISSIONS: dict[CollectionRole, frozenset[CollectionPermission]] = {
+    CollectionRole.VIEWER: frozenset({CollectionPermission.READ}),
+    CollectionRole.EDITOR: frozenset(
+        {
+            CollectionPermission.READ,
+            CollectionPermission.UPLOAD,
+            CollectionPermission.REINDEX,
+        }
+    ),
+    CollectionRole.MANAGER: frozenset(set(CollectionPermission)),
 }
 
 
@@ -65,6 +99,8 @@ class TrustedPrincipal:
 class ExternalIdentity:
     issuer: str
     subject: str
+    email: str | None = None
+    email_verified: bool = False
 
 
 class AuthenticationFailure(Exception):
@@ -229,7 +265,13 @@ class AccessTokenVerifier:
         required_scopes = set(settings.auth_required_scopes.split())
         if not required_scopes.issubset(supplied_scopes):
             raise AuthenticationFailure("insufficient_scope")
-        return ExternalIdentity(settings.auth_issuer or "", subject)
+        email = claims.get("email")
+        return ExternalIdentity(
+            settings.auth_issuer or "",
+            subject,
+            email if isinstance(email, str) and len(email) <= 320 else None,
+            claims.get("email_verified") is True,
+        )
 
 
 @lru_cache
@@ -260,11 +302,7 @@ async def get_trusted_principal(
             raise authentication_error() from exc
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise authentication_error("Authentication credentials are required")
-    try:
-        identity = await get_access_token_verifier().verify(credentials.credentials)
-    except AuthenticationFailure as exc:
-        logger.warning("Authentication failed category=%s", exc.category)
-        raise authentication_error() from exc
+    identity = await verify_external_identity(credentials)
     user = await session.scalar(
         select(User).where(
             User.issuer == identity.issuer,
@@ -277,7 +315,32 @@ async def get_trusted_principal(
     return TrustedPrincipal(tenant_id=None, user_id=user.id)
 
 
-def has_permission(role: MembershipRole, permission: Permission) -> bool:
+async def verify_external_identity(
+    credentials: Annotated[
+        HTTPAuthorizationCredentials | None, Security(bearer_scheme)
+    ],
+) -> ExternalIdentity:
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise authentication_error("Authentication credentials are required")
+    try:
+        return await get_access_token_verifier().verify(credentials.credentials)
+    except AuthenticationFailure as exc:
+        logger.warning("Authentication failed category=%s", exc.category)
+        raise authentication_error() from exc
+
+
+def has_permission(
+    role: MembershipRole | CollectionRole, permission: Permission
+) -> bool:
+    if isinstance(role, CollectionRole):
+        mapped = {
+            Permission.READ: CollectionPermission.READ,
+            Permission.UPLOAD: CollectionPermission.UPLOAD,
+            Permission.REINDEX: CollectionPermission.REINDEX,
+            Permission.DELETE_DOCUMENT: CollectionPermission.DELETE,
+            Permission.MANAGE_COLLECTIONS: CollectionPermission.MANAGE_GRANTS,
+        }.get(permission)
+        return mapped is not None and mapped in COLLECTION_ROLE_PERMISSIONS[role]
     return permission in ROLE_PERMISSIONS.get(role, frozenset())
 
 
@@ -292,8 +355,63 @@ async def require_membership(
             Membership.user_id == user_id,
             Membership.tenant_id == tenant_id,
             Membership.enabled.is_(True),
+            Membership.status == "active",
         )
     )
     if membership is None or not has_permission(membership.role, permission):
         raise HTTPException(status_code=403, detail="Permission denied")
     return membership
+
+
+async def require_collection_permission(
+    session: AsyncSession,
+    user_id: UUID,
+    collection_id: UUID,
+    permission: CollectionPermission,
+) -> tuple[UUID, MembershipRole, CollectionRole | None]:
+    row = (
+        await session.execute(
+            select(Collection.tenant_id, Membership.role, CollectionGrant.role)
+            .join(
+                Membership,
+                (Membership.tenant_id == Collection.tenant_id)
+                & (Membership.user_id == user_id),
+            )
+            .outerjoin(
+                CollectionGrant,
+                (CollectionGrant.tenant_id == Collection.tenant_id)
+                & (CollectionGrant.collection_id == Collection.id)
+                & (CollectionGrant.membership_id == Membership.id),
+            )
+            .where(
+                Collection.id == collection_id,
+                Membership.enabled.is_(True),
+                Membership.status == "active",
+            )
+        )
+    ).one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Collection not found")
+    tenant_id, organization_role, collection_role = row
+    if organization_role in {MembershipRole.OWNER, MembershipRole.ADMIN}:
+        return tenant_id, organization_role, collection_role
+    if (
+        collection_role is None
+        or permission not in COLLECTION_ROLE_PERMISSIONS[collection_role]
+    ):
+        session.add(
+            AuditEvent(
+                tenant_id=tenant_id,
+                actor_user_id=user_id,
+                actor_role=organization_role.value,
+                action="authorization.denied",
+                target_type="collection",
+                target_id=collection_id,
+                outcome="denied",
+                request_id=request_id_var.get(),
+                event_metadata={"reason_code": "collection_permission"},
+            )
+        )
+        await session.commit()
+        raise HTTPException(status_code=404, detail="Collection not found")
+    return tenant_id, organization_role, collection_role

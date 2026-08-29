@@ -23,6 +23,7 @@ from app.api.search import (
     get_embedding_provider,
     get_reranker_dependency,
 )
+from app.assistant_intents import deterministic_intent, deterministic_message
 from app.auth import TrustedPrincipal, get_trusted_principal
 from app.core.config import get_settings
 from app.db.models import (
@@ -32,6 +33,8 @@ from app.db.models import (
     ConversationMessageRole,
     ConversationTurn,
     ConversationTurnStatus,
+    Document,
+    DocumentStatus,
     DocumentVersion,
 )
 from app.db.session import get_session
@@ -127,6 +130,8 @@ class ConversationTurnResponse(BaseModel):
     rewrite_output_tokens: int
     rewrite_latency_ms: float
     answer: AskResponse | None = None
+    deterministic_reason: str | None = None
+    deterministic_message: str | None = None
 
 
 def get_rewriter_dependency() -> FollowUpRewriter | None:
@@ -434,6 +439,53 @@ async def create_message(
         raise HTTPException(
             status_code=409, detail="Conversation already has an active turn"
         ) from exc
+    intent = deterministic_intent(request.query)
+    ready_documents = await session.scalar(
+        select(func.count())
+        .select_from(Document)
+        .where(
+            Document.collection_id == collection_id,
+            Document.tenant_id == tenant_id,
+            Document.status == DocumentStatus.AVAILABLE,
+            Document.active_version_id.is_not(None),
+        )
+    )
+    reason = intent or ("empty_collection" if not ready_documents else None)
+    if reason:
+        content = deterministic_message(reason)
+        assistant_message = ConversationMessage(
+            conversation_id=conversation_id,
+            turn_id=turn.id,
+            sequence_number=sequence * 2,
+            role=ConversationMessageRole.ASSISTANT,
+            content=content,
+            completed_at=datetime.now(UTC),
+        )
+        session.add(assistant_message)
+        await session.flush()
+        result = ConversationTurnResponse(
+            conversation_id=conversation_id,
+            turn_id=turn.id,
+            user_message_id=user_message.id,
+            assistant_message_id=assistant_message.id,
+            turn_status="completed",
+            rewriting_applied=False,
+            standalone_query=None,
+            clarification_question=None,
+            rewrite_model="deterministic",
+            rewrite_input_tokens=0,
+            rewrite_output_tokens=0,
+            rewrite_latency_ms=0,
+            answer=None,
+            deterministic_reason=reason,
+            deterministic_message=content,
+        )
+        turn.status = ConversationTurnStatus.COMPLETED
+        turn.completed_at = datetime.now(UTC)
+        turn.rewrite_status = "bypassed"
+        turn.response = result.model_dump(mode="json")
+        await session.commit()
+        return result
     try:
         history_rows = list(
             (

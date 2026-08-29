@@ -12,6 +12,9 @@ A production-oriented multi-tenant system for ingesting PDF/DOCX sources, compar
 - grounded answers, refusals and validated citation source access
 - deterministic fake-provider evaluation and privacy-conscious telemetry
 - hardened TLS-only edge, private services, file secrets and recovery tooling
+- organization administration, explicit collection grants and secure invitations
+- append-only business audit events, answer feedback and product analytics
+- deterministic English, French and Arabic onboarding replies with zero provider calls
 
 | Mode | Strength | Tradeoff | Synthetic Recall@10 |
 | --- | --- | --- | ---: |
@@ -42,12 +45,10 @@ GET    /collections/{collection_id}/documents/{document_id}/versions
 GET    /collections/{collection_id}/documents/{document_id}/versions/{version_id}
 ```
 
-Milestones 10–13 add external OAuth/OIDC access-token validation, internal principals,
-tenant-scoped conversations and document lifecycle management, plus the authenticated
-Next.js frontend. Milestone 14 adds versioned deterministic RAG evaluation and an
-opt-in privacy-safe OpenTelemetry/Prometheus/Grafana stack. Milestone 15 deployment
-hardening remains deferred. See
-[`docs/EVALUATION_OBSERVABILITY.md`](docs/EVALUATION_OBSERVABILITY.md).
+All original 15 roadmap milestones remain complete. The separately documented
+[post-v1 enterprise upgrade](docs/POST_V1_ENTERPRISE_UPGRADE.md) adds application
+authorization administration, collection access, audit activity, feedback,
+analytics and deterministic onboarding UX without changing the RAG pipeline.
 
 ## Prerequisites
 

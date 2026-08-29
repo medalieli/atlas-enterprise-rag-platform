@@ -1,4 +1,5 @@
 """Standards-oriented ephemeral RS256/OIDC issuer for local verification only."""
+
 from __future__ import annotations
 
 import argparse
@@ -26,6 +27,8 @@ class Issuer(BaseHTTPRequestHandler):
     client_id = ""
     client_secret = ""
     redirect_uri = "https://localhost/api/auth/callback"
+    subject = "m15-admin"
+    email = "atlas-admin@example.test"
     private_key: object
     jwks: dict[str, object]
     codes: dict[str, tuple[str, str, float]] = {}
@@ -42,17 +45,20 @@ class Issuer(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         if parsed.path == "/.well-known/openid-configuration":
-            self.send_json(200, {
-                "issuer": self.issuer,
-                "authorization_endpoint": f"{self.issuer}/authorize",
-                "token_endpoint": f"{self.issuer}/token",
-                "jwks_uri": f"{self.issuer}/jwks",
-                "response_types_supported": ["code"],
-                "grant_types_supported": ["authorization_code"],
-                "code_challenge_methods_supported": ["S256"],
-                "id_token_signing_alg_values_supported": ["RS256"],
-                "scopes_supported": ["openid", "profile", "rag:access"],
-            })
+            self.send_json(
+                200,
+                {
+                    "issuer": self.issuer,
+                    "authorization_endpoint": f"{self.issuer}/authorize",
+                    "token_endpoint": f"{self.issuer}/token",
+                    "jwks_uri": f"{self.issuer}/jwks",
+                    "response_types_supported": ["code"],
+                    "grant_types_supported": ["authorization_code"],
+                    "code_challenge_methods_supported": ["S256"],
+                    "id_token_signing_alg_values_supported": ["RS256"],
+                    "scopes_supported": ["openid", "profile", "email", "rag:access"],
+                },
+            )
             return
         if parsed.path == "/jwks":
             self.send_json(200, self.jwks)
@@ -65,7 +71,9 @@ class Issuer(BaseHTTPRequestHandler):
         if any(not query.get(name) for name in required):
             self.send_error(HTTPStatus.BAD_REQUEST)
             return
-        if query["client_id"][0] != self.client_id or query.get("code_challenge_method") != ["S256"]:
+        if query["client_id"][0] != self.client_id or query.get(
+            "code_challenge_method"
+        ) != ["S256"]:
             self.send_error(HTTPStatus.BAD_REQUEST)
             return
         redirect = query["redirect_uri"][0]
@@ -93,7 +101,9 @@ class Issuer(BaseHTTPRequestHandler):
         valid = (
             form.get("grant_type") == ["authorization_code"]
             and form.get("client_id") == [self.client_id]
-            and secrets.compare_digest(form.get("client_secret", [""])[0], self.client_secret)
+            and secrets.compare_digest(
+                form.get("client_secret", [""])[0], self.client_secret
+            )
             and record is not None
             and record[0] == challenge
             and record[1] == form.get("redirect_uri", [""])[0]
@@ -104,11 +114,31 @@ class Issuer(BaseHTTPRequestHandler):
             return
         now = int(time.time())
         claims = {
-            "iss": self.issuer, "sub": "m15-admin", "aud": "production-rag-assistant-api",
-            "iat": now, "nbf": now - 1, "exp": now + 900, "scope": "rag:access",
+            "iss": self.issuer,
+            "sub": self.subject,
+            "aud": "production-rag-assistant-api",
+            "iat": now,
+            "nbf": now - 1,
+            "exp": now + 900,
+            "scope": "openid profile email rag:access",
+            "email": self.email,
+            "email_verified": True,
         }
-        token = jwt.encode(claims, self.private_key, algorithm="RS256", headers={"kid": "m15", "typ": "at+jwt"})
-        self.send_json(200, {"access_token": token, "token_type": "Bearer", "expires_in": 900, "scope": "openid profile rag:access"})
+        token = jwt.encode(
+            claims,
+            self.private_key,
+            algorithm="RS256",
+            headers={"kid": "m15", "typ": "at+jwt"},
+        )
+        self.send_json(
+            200,
+            {
+                "access_token": token,
+                "token_type": "Bearer",
+                "expires_in": 900,
+                "scope": "openid profile email rag:access",
+            },
+        )
 
     def log_message(self, format: str, *args: object) -> None:
         return
@@ -122,11 +152,13 @@ def main() -> None:
     parser.add_argument("--client-secret-file", type=Path, required=True)
     parser.add_argument("--port", type=int, default=9444)
     parser.add_argument("--insecure-http", action="store_true")
-    parser.add_argument(
-        "--redirect-uri", default="https://localhost/api/auth/callback"
-    )
+    parser.add_argument("--subject", default="m15-admin")
+    parser.add_argument("--email", default="atlas-admin@example.test")
+    parser.add_argument("--redirect-uri", default="https://localhost/api/auth/callback")
     args = parser.parse_args()
-    private_key = serialization.load_pem_private_key(args.signing_key.read_bytes(), password=None)
+    private_key = serialization.load_pem_private_key(
+        args.signing_key.read_bytes(), password=None
+    )
     public = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(private_key.public_key()))
     public.update({"kid": "m15", "alg": "RS256", "use": "sig"})
     Issuer.private_key = private_key
@@ -136,6 +168,8 @@ def main() -> None:
     Issuer.client_id = "m15-local-client"
     Issuer.client_secret = args.client_secret_file.read_text().strip()
     Issuer.redirect_uri = args.redirect_uri
+    Issuer.subject = args.subject
+    Issuer.email = args.email.strip().lower()
     server = ThreadingHTTPServer(("0.0.0.0", args.port), Issuer)
     if not args.insecure_http:
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)

@@ -7,14 +7,18 @@ from pydantic import BaseModel, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import Permission, TrustedPrincipal, get_trusted_principal, has_permission
+from app.api.enterprise import business_audit_event
+from app.auth import (
+    CollectionPermission,
+    TrustedPrincipal,
+    get_trusted_principal,
+    require_collection_permission,
+)
 from app.core.config import get_settings
 from app.db.models import (
-    Collection,
     Document,
     DocumentIndexGeneration,
     DocumentVersion,
-    Membership,
     ProcessingJob,
 )
 from app.db.session import get_session
@@ -59,26 +63,9 @@ async def upload_document(
     session: Annotated[AsyncSession, Depends(get_session)],
     metadata: Annotated[str | None, Form()] = None,
 ) -> UploadResponse:
-    row = (
-        await session.execute(
-            select(Collection, Membership.role)
-            .join(
-                Membership,
-                (Membership.tenant_id == Collection.tenant_id)
-                & (Membership.user_id == principal.user_id),
-            )
-            .where(
-                Collection.id == collection_id,
-                Membership.enabled.is_(True),
-            )
-        )
-    ).one_or_none()
-    if row is None:
-        raise HTTPException(status_code=404, detail="Collection not found")
-    collection, role = row
-    if not has_permission(role, Permission.UPLOAD):
-        raise HTTPException(status_code=403, detail="Permission denied")
-    tenant_id = collection.tenant_id
+    tenant_id, _, _ = await require_collection_permission(
+        session, principal.user_id, collection_id, CollectionPermission.UPLOAD
+    )
 
     try:
         if metadata is None:
@@ -160,6 +147,16 @@ async def upload_document(
         session.add(generation)
         await session.flush()
         session.add(job)
+        session.add(
+            business_audit_event(
+                tenant_id,
+                principal.user_id,
+                None,
+                "document.uploaded",
+                "document",
+                document_id,
+            )
+        )
         await session.commit()
     except UploadValidationError as exc:
         await storage.delete(key)
@@ -196,25 +193,19 @@ async def get_processing_job(
     principal: Annotated[TrustedPrincipal, Depends(get_trusted_principal)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> JobResponse:
-    row = (
-        await session.execute(
-            select(ProcessingJob, Membership.role)
-            .join(
-                Membership,
-                (Membership.tenant_id == ProcessingJob.tenant_id)
-                & (Membership.user_id == principal.user_id),
-            )
-            .where(
-                ProcessingJob.id == job_id,
-                Membership.enabled.is_(True),
-            )
-        )
-    ).one_or_none()
-    if row is None:
+    job = await session.scalar(select(ProcessingJob).where(ProcessingJob.id == job_id))
+    if job is None:
         raise HTTPException(status_code=404, detail="Processing job not found")
-    job, role = row
-    if not has_permission(role, Permission.READ):
-        raise HTTPException(status_code=403, detail="Permission denied")
+    document = await session.scalar(
+        select(Document).where(
+            Document.id == job.document_id, Document.tenant_id == job.tenant_id
+        )
+    )
+    if document is None:
+        raise HTTPException(status_code=404, detail="Processing job not found")
+    await require_collection_permission(
+        session, principal.user_id, document.collection_id, CollectionPermission.READ
+    )
     return JobResponse(
         job_id=job.id,
         document_id=job.document_id,

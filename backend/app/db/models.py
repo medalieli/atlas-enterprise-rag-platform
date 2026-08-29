@@ -25,10 +25,15 @@ from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
 
 class MembershipRole(StrEnum):
-    VIEWER = "viewer"
-    MEMBER = "viewer"
-    EDITOR = "editor"
+    OWNER = "owner"
     ADMIN = "admin"
+    MEMBER = "member"
+
+
+class CollectionRole(StrEnum):
+    MANAGER = "manager"
+    EDITOR = "editor"
+    VIEWER = "viewer"
 
 
 class DocumentStatus(StrEnum):
@@ -106,6 +111,12 @@ class Membership(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         UniqueConstraint("tenant_id", "user_id", name="uq_memberships_tenant_user"),
         Index("ix_memberships_user_id", "user_id"),
         Index("ix_memberships_tenant_enabled", "tenant_id", "enabled"),
+        UniqueConstraint("tenant_id", "id", name="uq_memberships_tenant_id_id"),
+        CheckConstraint(
+            "status IN ('active','suspended','revoked')",
+            name="ck_memberships_status",
+        ),
+        CheckConstraint("version >= 1", name="ck_memberships_version"),
     )
 
     tenant_id: Mapped[UUID] = mapped_column(
@@ -125,12 +136,216 @@ class Membership(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             values_callable=lambda enum: [e.value for e in enum],
         ),
         nullable=False,
-        default=MembershipRole.VIEWER,
-        server_default=MembershipRole.VIEWER.value,
+        default=MembershipRole.MEMBER,
+        server_default=MembershipRole.MEMBER.value,
     )
     enabled: Mapped[bool] = mapped_column(
         nullable=False, default=True, server_default="true"
     )
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="active", server_default="active"
+    )
+    version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
+
+
+class Invitation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "invitations"
+    __table_args__ = (
+        UniqueConstraint("token_hash", name="uq_invitations_token_hash"),
+        CheckConstraint(
+            "status IN ('pending','accepted','expired','revoked','replaced')",
+            name="ck_invitations_status",
+        ),
+        CheckConstraint(
+            "attempt_count BETWEEN 0 AND 10", name="ck_invitations_attempts"
+        ),
+        Index(
+            "ix_invitations_tenant_status_created", "tenant_id", "status", "created_at"
+        ),
+        Index("ix_invitations_tenant_email", "tenant_id", "email_normalized"),
+    )
+    tenant_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    email_normalized: Mapped[str] = mapped_column(String(320), nullable=False)
+    issuer: Mapped[str] = mapped_column(String(500), nullable=False)
+    role: Mapped[MembershipRole] = mapped_column(
+        Enum(
+            MembershipRole,
+            name="membership_role",
+            values_callable=lambda e: [v.value for v in e],
+        ),
+        nullable=False,
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="pending", server_default="pending"
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    created_by_user_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+    )
+    accepted_by_user_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    attempt_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    initial_grants: Mapped[list[dict[str, str]]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+
+
+class CollectionGrant(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "collection_grants"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "collection_id"],
+            ["collections.tenant_id", "collections.id"],
+            name="fk_grants_tenant_collection",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "membership_id"],
+            ["memberships.tenant_id", "memberships.id"],
+            name="fk_grants_tenant_membership",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "collection_id",
+            "membership_id",
+            name="uq_collection_grants_scope",
+        ),
+        Index(
+            "ix_collection_grants_member_collection", "membership_id", "collection_id"
+        ),
+    )
+    tenant_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=False
+    )
+    collection_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=False
+    )
+    membership_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=False
+    )
+    role: Mapped[CollectionRole] = mapped_column(
+        Enum(
+            CollectionRole,
+            name="collection_role",
+            values_callable=lambda e: [v.value for v in e],
+        ),
+        nullable=False,
+    )
+    created_by_user_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+    )
+
+
+class AuditEvent(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "audit_events"
+    __table_args__ = (
+        CheckConstraint(
+            "outcome IN ('success','denied','failure')", name="ck_audit_outcome"
+        ),
+        CheckConstraint(
+            "pg_column_size(metadata) <= 2048", name="ck_audit_metadata_size"
+        ),
+        Index("ix_audit_tenant_created_id", "tenant_id", "created_at", "id"),
+        Index("ix_audit_tenant_actor", "tenant_id", "actor_user_id", "created_at"),
+        Index("ix_audit_tenant_action", "tenant_id", "action", "created_at"),
+    )
+    tenant_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    actor_user_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    actor_role: Mapped[str | None] = mapped_column(String(32))
+    action: Mapped[str] = mapped_column(String(100), nullable=False)
+    target_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    target_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
+    outcome: Mapped[str] = mapped_column(String(16), nullable=False)
+    request_id: Mapped[str | None] = mapped_column(String(64))
+    event_metadata: Mapped[dict[str, object]] = mapped_column(
+        "metadata",
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+
+class AnswerFeedback(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "answer_feedback"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "user_id",
+            "assistant_message_id",
+            name="uq_feedback_user_answer",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "collection_id", "conversation_id", "user_id"],
+            [
+                "conversations.tenant_id",
+                "conversations.collection_id",
+                "conversations.id",
+                "conversations.created_by_user_id",
+            ],
+            name="fk_feedback_owned_conversation",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["conversation_id", "assistant_message_id"],
+            ["conversation_messages.conversation_id", "conversation_messages.id"],
+            name="fk_feedback_conversation_message",
+            ondelete="CASCADE",
+        ),
+        CheckConstraint(
+            "rating IN ('helpful','not_helpful')", name="ck_feedback_rating"
+        ),
+        CheckConstraint(
+            "reason IS NULL OR reason IN "
+            "('incorrect','incomplete','irrelevant_sources','citation_problem',"
+            "'outdated_source','other')",
+            name="ck_feedback_reason",
+        ),
+        Index("ix_feedback_tenant_created", "tenant_id", "created_at"),
+    )
+    tenant_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    collection_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=False
+    )
+    conversation_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=False
+    )
+    user_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
+    assistant_message_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=False
+    )
+    rating: Mapped[str] = mapped_column(String(16), nullable=False)
+    reason: Mapped[str | None] = mapped_column(String(32))
 
 
 class Collection(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -822,6 +1037,9 @@ class ConversationMessage(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "sequence_number",
             name="uq_conversation_message_sequence",
         ),
+        UniqueConstraint(
+            "conversation_id", "id", name="uq_conversation_messages_conversation_id"
+        ),
         CheckConstraint(
             "sequence_number >= 1", name="ck_conversation_message_sequence"
         ),
@@ -933,7 +1151,11 @@ class ConversationCitation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 
 __all__ = [
+    "AnswerFeedback",
+    "AuditEvent",
     "Collection",
+    "CollectionGrant",
+    "CollectionRole",
     "Conversation",
     "ConversationCitation",
     "ConversationMessage",
@@ -948,6 +1170,7 @@ __all__ = [
     "DocumentVersion",
     "DocumentVersionStatus",
     "IndexGenerationStatus",
+    "Invitation",
     "Membership",
     "MembershipRole",
     "Organization",

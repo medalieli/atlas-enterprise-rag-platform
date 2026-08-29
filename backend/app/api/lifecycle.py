@@ -20,15 +20,21 @@ from pydantic import BaseModel, ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import Permission, TrustedPrincipal, get_trusted_principal, has_permission
+from app.api.enterprise import business_audit_event
+from app.auth import (
+    CollectionPermission,
+    Permission,
+    TrustedPrincipal,
+    get_trusted_principal,
+    has_permission,
+    require_collection_permission,
+)
 from app.core.config import get_settings
 from app.db.models import (
-    Collection,
     Document,
     DocumentIndexGeneration,
     DocumentStatus,
     DocumentVersion,
-    Membership,
     ProcessingJob,
     ProcessingJobStatus,
 )
@@ -108,29 +114,20 @@ async def _document_and_role(
     collection_id: UUID,
     document_id: UUID,
 ) -> tuple[Document, object]:
-    row = (
-        await session.execute(
-            select(Document, Membership.role)
-            .join(
-                Collection,
-                (Collection.id == Document.collection_id)
-                & (Collection.tenant_id == Document.tenant_id),
-            )
-            .join(
-                Membership,
-                (Membership.tenant_id == Document.tenant_id)
-                & (Membership.user_id == principal.user_id),
-            )
-            .where(
-                Document.id == document_id,
-                Document.collection_id == collection_id,
-                Membership.enabled.is_(True),
-            )
+    document = await session.scalar(
+        select(Document).where(
+            Document.id == document_id, Document.collection_id == collection_id
         )
-    ).one_or_none()
-    if row is None:
+    )
+    if document is None:
         raise HTTPException(status_code=404, detail="Document not found")
-    return row
+    _, organization_role, collection_role = await require_collection_permission(
+        session, principal.user_id, collection_id, CollectionPermission.READ
+    )
+    return document, organization_role if organization_role.value in {
+        "owner",
+        "admin",
+    } else collection_role
 
 
 def _metadata(raw: str | None) -> dict[str, object]:
@@ -309,6 +306,16 @@ async def replace_document(
         session.add(generation)
         await session.flush()
         session.add(job)
+        session.add(
+            business_audit_event(
+                locked.tenant_id,
+                principal.user_id,
+                None,
+                "document.replacement_requested",
+                "document",
+                locked.id,
+            )
+        )
         await session.commit()
     except Exception:
         await session.rollback()
@@ -450,6 +457,16 @@ async def reindex_document(
     session.add(generation)
     await session.flush()
     session.add(job)
+    session.add(
+        business_audit_event(
+            locked.tenant_id,
+            principal.user_id,
+            None,
+            "document.reindex_requested",
+            "document",
+            locked.id,
+        )
+    )
     await session.commit()
     try:
         with stage("lifecycle.reindex.enqueue", {"rag.operation": "reindex"}):
@@ -514,6 +531,16 @@ async def delete_document(
     )
     locked.status = DocumentStatus.DELETING
     session.add(job)
+    session.add(
+        business_audit_event(
+            locked.tenant_id,
+            principal.user_id,
+            None,
+            "document.deletion_requested",
+            "document",
+            locked.id,
+        )
+    )
     await session.commit()
     try:
         delete_document_task.apply_async(
@@ -536,19 +563,9 @@ async def list_documents(
     principal: Annotated[TrustedPrincipal, Depends(get_trusted_principal)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> list[DocumentListItem]:
-    authorized = await session.scalar(
-        select(Membership.role)
-        .join(Collection, Collection.tenant_id == Membership.tenant_id)
-        .where(
-            Collection.id == collection_id,
-            Membership.user_id == principal.user_id,
-            Membership.enabled.is_(True),
-        )
+    await require_collection_permission(
+        session, principal.user_id, collection_id, CollectionPermission.READ
     )
-    if authorized is None:
-        raise HTTPException(status_code=404, detail="Collection not found")
-    if not has_permission(authorized, Permission.READ):
-        raise HTTPException(status_code=403, detail="Permission denied")
     rows = (
         await session.execute(
             select(Document, DocumentVersion)

@@ -97,27 +97,27 @@ async def add_chunk(
     )
     await session.flush()  # type: ignore[attr-defined]
     chunk = DocumentChunk(
-            tenant_id=tenant_id,
-            document_id=document_id,
-            document_version_id=version_id,
-            generation_id=generation_id,
-            source_unit_id=unit_id,
-            chunk_index=0,
-            content=content,
-            content_hash=digest,
-            pipeline_fingerprint="1" * 64,
-            page_number=1,
-            start_offset=0,
-            end_offset=len(content),
-            embedding=[1.0] + [0.0] * 1535,
-            embedding_model="text-embedding-3-small",
-            embedding_dimensions=1536,
-            embedding_input_version=EMBEDDING_INPUT_VERSION,
-            embedding_fingerprint=embedding_fingerprint(
-                digest, "text-embedding-3-small", 1536
-            ),
-            embedded_at=datetime.now(UTC),
-        )
+        tenant_id=tenant_id,
+        document_id=document_id,
+        document_version_id=version_id,
+        generation_id=generation_id,
+        source_unit_id=unit_id,
+        chunk_index=0,
+        content=content,
+        content_hash=digest,
+        pipeline_fingerprint="1" * 64,
+        page_number=1,
+        start_offset=0,
+        end_offset=len(content),
+        embedding=[1.0] + [0.0] * 1535,
+        embedding_model="text-embedding-3-small",
+        embedding_dimensions=1536,
+        embedding_input_version=EMBEDDING_INPUT_VERSION,
+        embedding_fingerprint=embedding_fingerprint(
+            digest, "text-embedding-3-small", 1536
+        ),
+        embedded_at=datetime.now(UTC),
+    )
     session.add(chunk)  # type: ignore[attr-defined]
     await session.flush()  # type: ignore[attr-defined]
     return chunk.id
@@ -195,9 +195,12 @@ async def test_retrieval_follows_both_active_pointers() -> None:
             assert current is not None
             current.active_generation_id = generation_2
         async with session_factory() as session:
-            assert await keyword_candidates(
-                session, tenant_id, collection_id, "legacyterm", 10
-            ) == []
+            assert (
+                await keyword_candidates(
+                    session, tenant_id, collection_id, "legacyterm", 10
+                )
+                == []
+            )
             after = await keyword_candidates(
                 session, tenant_id, collection_id, "currentterm", 10
             )
@@ -291,9 +294,7 @@ async def test_reindex_switches_generation_without_changing_source(
 async def test_hard_deletion_keeps_only_logical_tombstone(
     tmp_path: object, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    tenant_id, collection_id, document_id, job_id, user_id = (
-        uuid4() for _ in range(5)
-    )
+    tenant_id, collection_id, document_id, job_id, user_id = (uuid4() for _ in range(5))
     monkeypatch.setattr("app.tasks.get_settings", lambda: settings(str(tmp_path)))
     try:
         async with session_factory() as session, session.begin():
@@ -390,10 +391,7 @@ async def test_hard_deletion_keeps_only_logical_tombstone(
             )
 
         assert await process_deletion(tenant_id, document_id, job_id) == "succeeded"
-        assert (
-            await process_deletion(tenant_id, document_id, job_id)
-            == "stale"
-        )
+        assert await process_deletion(tenant_id, document_id, job_id) == "stale"
         async with session_factory() as session:
             document = await session.get(Document, document_id)
             job = await session.get(ProcessingJob, job_id)

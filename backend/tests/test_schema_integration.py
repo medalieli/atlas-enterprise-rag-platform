@@ -28,7 +28,7 @@ pytestmark = [
     ),
 ]
 
-REVISION = "c3d4e5f6a7b8"
+REVISION = "d4e5f6a7b8c9"
 
 
 async def test_conversation_history_constraints_and_indexes_exist() -> None:
@@ -96,7 +96,7 @@ async def test_authentication_constraints_roles_and_indexes_exist() -> None:
         "ix_memberships_tenant_enabled",
         "ix_processing_jobs_requested_by",
     }
-    assert roles == {"viewer", "editor", "admin"}
+    assert roles == {"owner", "admin", "member"}
 
 
 async def test_embedding_hnsw_cosine_index_exists() -> None:

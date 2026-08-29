@@ -63,7 +63,7 @@ async def test_replacement_api_is_idempotent_tenant_safe_and_path_safe(
             ]
         )
         await session.flush()
-        session.add(Membership(tenant_id=tenant_id, user_id=user_id, role="editor"))
+        session.add(Membership(tenant_id=tenant_id, user_id=user_id, role="owner"))
         session.add_all(
             [
                 Collection(id=collection_id, tenant_id=tenant_id, name="Docs"),
@@ -135,7 +135,8 @@ async def test_replacement_api_is_idempotent_tenant_safe_and_path_safe(
                     )
                 )
                 assert membership is not None
-                membership.role = "viewer"
+                membership.status = "suspended"
+                membership.enabled = False
             forbidden_replacement = await client.post(
                 f"/collections/{collection_id}/documents/{document_id}/versions",
                 files={"file": ("version-3.pdf", content, "application/pdf")},
@@ -148,9 +149,9 @@ async def test_replacement_api_is_idempotent_tenant_safe_and_path_safe(
             forbidden_delete = await client.delete(
                 f"/collections/{collection_id}/documents/{document_id}"
             )
-            assert forbidden_replacement.status_code == 403
-            assert forbidden_reindex.status_code == 403
-            assert forbidden_delete.status_code == 403
+            assert forbidden_replacement.status_code == 404
+            assert forbidden_reindex.status_code == 404
+            assert forbidden_delete.status_code == 404
 
         async with session_factory() as session:
             assert (

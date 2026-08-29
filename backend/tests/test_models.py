@@ -4,7 +4,10 @@ from app.db import models  # noqa: F401
 from app.db.base import Base
 
 EXPECTED_TABLES = {
+    "answer_feedback",
+    "audit_events",
     "collections",
+    "collection_grants",
     "conversations",
     "conversation_citations",
     "conversation_messages",
@@ -15,6 +18,7 @@ EXPECTED_TABLES = {
     "document_versions",
     "documents",
     "memberships",
+    "invitations",
     "organizations",
     "processing_jobs",
     "users",

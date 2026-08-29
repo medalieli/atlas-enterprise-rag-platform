@@ -27,3 +27,13 @@ Tenant-local identifiers used by composite foreign keys have matching unique con
 - JSONB is limited to document and chunk source metadata whose keys vary by file type and parser.
 - Status values use named PostgreSQL enums. No embedding dimensions or vector columns are introduced in this milestone.
 - Alembic is the only mechanism that creates application tables; application startup never calls `create_all`.
+
+## Post-v1 enterprise extension
+
+Revision `d4e5f6a7b8c9` adds database-backed organization membership status/version,
+single-use hashed invitations, collection grants, append-only business audit events,
+and one current feedback row per user/answer. Existing administrators become owners;
+legacy editors/viewers become members with equivalent grants on their existing
+collections, avoiding broader access. Composite tenant foreign keys and uniqueness
+constraints reject cross-tenant associations. Full semantics and operational notes
+are in `POST_V1_ENTERPRISE_UPGRADE.md`.

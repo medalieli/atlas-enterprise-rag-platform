@@ -201,7 +201,7 @@ async def seed_hybrid() -> tuple[TrustedPrincipal, UUID, UUID, UUID, UUID]:
             ]
         )
         await session.flush()
-        session.add(Membership(tenant_id=tenant_id, user_id=user_id))
+        session.add(Membership(tenant_id=tenant_id, user_id=user_id, role="owner"))
         session.add_all(
             [
                 Collection(id=collection_id, tenant_id=tenant_id, name="Policies"),

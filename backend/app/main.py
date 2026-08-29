@@ -11,6 +11,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.api.answers import router as answers_router
 from app.api.conversations import router as conversations_router
 from app.api.documents import router as documents_router
+from app.api.enterprise import router as enterprise_router
 from app.api.health import router as health_router
 from app.api.identity import router as identity_router
 from app.api.lifecycle import router as lifecycle_router
@@ -44,6 +45,7 @@ app.include_router(health_router)
 app.include_router(identity_router)
 app.include_router(lifecycle_router)
 app.include_router(documents_router)
+app.include_router(enterprise_router)
 app.include_router(search_router)
 
 

@@ -78,6 +78,7 @@ class Settings(BaseSettings):
     auth_jwks_cache_seconds: int = Field(default=300, ge=30, le=86_400)
     auth_jwks_max_bytes: int = Field(default=65_536, ge=1_024, le=1_048_576)
     auth_allow_insecure_http: bool = False
+    invitation_expiration_hours: int = Field(default=72, ge=1, le=168)
     redis_url: str = "redis://localhost:6379/0"
     document_storage_path: str = "./data/documents"
     max_upload_bytes: int = 20 * 1024 * 1024

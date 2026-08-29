@@ -62,7 +62,7 @@ async def test_owned_conversation_first_turn_and_idempotency() -> None:
             User(id=user_id, issuer="https://issuer.test", subject=str(user_id))
         )
         await session.flush()
-        session.add(Membership(tenant_id=tenant_id, user_id=user_id))
+        session.add(Membership(tenant_id=tenant_id, user_id=user_id, role="owner"))
         session.add(
             Collection(id=collection_id, tenant_id=tenant_id, name="Conversation docs")
         )
@@ -109,14 +109,15 @@ async def test_owned_conversation_first_turn_and_idempotency() -> None:
         assert created.status_code == 201
         assert first.status_code == 200, first.text
         assert first.json()["rewriting_applied"] is False
-        assert first.json()["answer"]["status"] == "insufficient_context"
+        assert first.json()["answer"] is None
+        assert first.json()["deterministic_reason"] == "empty_collection"
         assert repeated.json() == first.json()
         assert conflict.status_code == 409
         assert clarification.status_code == 200
-        assert clarification.json()["clarification_question"]
+        assert clarification.json()["deterministic_reason"] == "empty_collection"
         assert clarification.json()["answer"] is None
-        assert clarifier.calls == 1
-        assert embedding.calls == 1
+        assert clarifier.calls == 0
+        assert embedding.calls == 0
         assert [item["role"] for item in messages.json()["messages"]] == [
             "user",
             "assistant",

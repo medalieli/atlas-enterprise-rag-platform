@@ -9,7 +9,15 @@ from sqlalchemy.exc import IntegrityError
 from app.auth import ExternalIdentity, TrustedPrincipal, get_trusted_principal
 from app.bootstrap_identity import bind_identity
 from app.core.config import Settings
-from app.db.models import Collection, Membership, MembershipRole, Organization, User
+from app.db.models import (
+    Collection,
+    CollectionGrant,
+    CollectionRole,
+    Membership,
+    MembershipRole,
+    Organization,
+    User,
+)
 from app.db.session import session_factory
 from app.main import app
 
@@ -42,14 +50,13 @@ async def seed_identity(role: MembershipRole) -> tuple:
             )
         )
         await session.flush()
-        session.add(
-            Membership(
-                tenant_id=tenant_id,
-                user_id=user_id,
-                role=role,
-                enabled=True,
-            )
+        membership = Membership(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            role=role,
+            enabled=True,
         )
+        session.add(membership)
         session.add(
             Collection(
                 id=collection_id,
@@ -57,6 +64,17 @@ async def seed_identity(role: MembershipRole) -> tuple:
                 name="Existing",
             )
         )
+        await session.flush()
+        if role == MembershipRole.MEMBER:
+            session.add(
+                CollectionGrant(
+                    tenant_id=tenant_id,
+                    collection_id=collection_id,
+                    membership_id=membership.id,
+                    role=CollectionRole.VIEWER,
+                    created_by_user_id=user_id,
+                )
+            )
     return tenant_id, user_id, collection_id
 
 
@@ -67,7 +85,7 @@ async def cleanup(tenant_id: object, user_id: object) -> None:
 
 
 async def test_viewer_identity_and_collection_permissions() -> None:
-    tenant_id, user_id, _ = await seed_identity(MembershipRole.VIEWER)
+    tenant_id, user_id, _ = await seed_identity(MembershipRole.MEMBER)
     app.dependency_overrides[get_trusted_principal] = lambda: TrustedPrincipal(
         None, user_id
     )
@@ -84,7 +102,7 @@ async def test_viewer_identity_and_collection_permissions() -> None:
             )
         assert me.status_code == 200
         assert me.json()["principal_id"] == str(user_id)
-        assert me.json()["memberships"][0]["role"] == "viewer"
+        assert me.json()["memberships"][0]["role"] == "member"
         assert listed.status_code == 200
         assert listed.json()[0]["name"] == "Existing"
         assert denied.status_code == 403
@@ -166,13 +184,13 @@ async def test_bootstrap_is_idempotent_and_does_not_create_tenant() -> None:
             "https://issuer.bootstrap.test",
             "stable-subject",
             tenant_id,
-            MembershipRole.EDITOR,
+            MembershipRole.MEMBER,
         )
         second = await bind_identity(
             "https://issuer.bootstrap.test",
             "stable-subject",
             tenant_id,
-            MembershipRole.EDITOR,
+            MembershipRole.MEMBER,
         )
         assert first == second
         with pytest.raises(ValueError):
@@ -221,7 +239,7 @@ async def test_issuer_subject_pair_is_unique_but_subject_is_provider_scoped() ->
 async def test_verified_issuer_subject_maps_to_enabled_internal_principal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    tenant_id, user_id, _ = await seed_identity(MembershipRole.VIEWER)
+    tenant_id, user_id, _ = await seed_identity(MembershipRole.MEMBER)
     selected_subject = {"value": str(user_id)}
 
     class FakeVerifier:

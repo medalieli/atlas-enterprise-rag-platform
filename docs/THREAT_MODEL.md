@@ -30,5 +30,7 @@ flowchart LR
 | OpenAI/local reranker | disclosure, quota exhaustion, compromise | authorized bounded context, content-free telemetry, concurrency/retry limits, pinned reranker revision; provider/cost/model risks remain |
 | CI/registry | poisoned PR/action/dependency/image | read-only forks, pinned Actions, no `pull_request_target`, scans/SBOM, immutable tags, protected environment; Docker socket only in trusted hosted image job |
 | Backup/observability | theft, telemetry leakage | encryption/off-host guidance, hashes, content-free telemetry, private dashboards; operator/KMS compromise remains |
+| Enterprise administration | invitation replay, privilege escalation, stale grants | token hashes, verified issuer/email matching, row locks, last-owner/self-change protections and per-request database authorization |
+| Audit/feedback/analytics | private-content leakage, tampering, cross-tenant inference | bounded enums/metadata, tenant-scoped queries, append-only trigger, no raw questions/answers/document text; database superusers remain trusted |
 
 Reachable critical/high findings block release absent evidence-based remediation. Record false positives and accepted risks with artifact, scanner/version, evidence, owner and review date.
