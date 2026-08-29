@@ -1,5 +1,12 @@
 # Document lifecycle
 
+The frontend exposes Milestone 12 details/history, replace, reindex, and hard
+delete without introducing another lifecycle. Viewers cannot mutate; editors can
+replace/reindex; managers and organization owner/admin roles can also delete. Hard
+deletion requires typing `DELETE`, removes active retrieval content, and retains
+redacted citation tombstones and immutable audit evidence. Archive remains
+unavailable because the existing model has no recoverable archive transition.
+
 Milestone 12 completes the document lifecycle architecture. Before this milestone,
 `documents` combined logical identity and source-snapshot state, chunks were replaced
 in place, and `conversation_citations.document_version_id` was only a compatibility

@@ -155,7 +155,7 @@ class Invitation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __table_args__ = (
         UniqueConstraint("token_hash", name="uq_invitations_token_hash"),
         CheckConstraint(
-            "status IN ('pending','accepted','expired','revoked','replaced')",
+            "status IN ('pending','accepted','expired','revoked','replaced','removed')",
             name="ck_invitations_status",
         ),
         CheckConstraint(
@@ -197,6 +197,7 @@ class Invitation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     attempt_count: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"
     )

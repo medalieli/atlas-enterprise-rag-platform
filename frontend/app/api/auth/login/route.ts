@@ -12,8 +12,8 @@ export async function GET(request: NextRequest) {
   if (!auth || !client) return NextResponse.redirect(new URL("/unauthorized?reason=configuration", origin));
   const verifier = generateRandomCodeVerifier();
   const state = generateRandomState();
-  const returnTo = request.nextUrl.searchParams.get("returnTo") || "/chat";
-  const safeReturnTo = returnTo.startsWith("/") && !returnTo.startsWith("//") ? returnTo : "/chat";
+  const returnTo = request.nextUrl.searchParams.get("returnTo") || "/dashboard";
+  const safeReturnTo = returnTo.startsWith("/") && !returnTo.startsWith("//") ? returnTo : "/dashboard";
   const jar = await cookies();
   jar.set("oidc_transaction", await encode({ verifier, state, returnTo: safeReturnTo }, "10m"), { httpOnly: true, secure: isSecureRuntime(), sameSite: "lax", path: "/", maxAge: 600 });
   const url = new URL(auth);

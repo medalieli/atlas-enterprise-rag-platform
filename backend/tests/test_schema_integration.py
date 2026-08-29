@@ -28,7 +28,7 @@ pytestmark = [
     ),
 ]
 
-REVISION = "d4e5f6a7b8c9"
+REVISION = "e5f6a7b8c9d0"
 
 
 async def test_conversation_history_constraints_and_indexes_exist() -> None:

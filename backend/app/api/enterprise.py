@@ -1,3 +1,5 @@
+import csv
+import io
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from secrets import token_urlsafe
@@ -5,6 +7,7 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -72,6 +75,10 @@ class InvitationCreate(BaseModel):
 class InvitationAccept(BaseModel):
     model_config = ConfigDict(extra="forbid")
     token: str = Field(min_length=32, max_length=512)
+
+
+class InvitationUpdate(InvitationCreate):
+    pass
 
 
 class MemberUpdate(BaseModel):
@@ -362,6 +369,9 @@ async def invitations(
     session: Annotated[AsyncSession, Depends(get_session)],
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     cursor: UUID | None = None,
+    invitation_status: Literal[
+        "active", "accepted", "expired", "revoked", "removed", "all"
+    ] = "active",
 ):
     await _admin(session, principal.user_id, tenant_id)
     now = datetime.now(UTC)
@@ -387,6 +397,10 @@ async def invitations(
             )
         )
     q = select(Invitation).where(Invitation.tenant_id == tenant_id)
+    if invitation_status == "active":
+        q = q.where(Invitation.status == "pending")
+    elif invitation_status != "all":
+        q = q.where(Invitation.status == invitation_status)
     if cursor:
         q = q.where(Invitation.id > cursor)
     rows = (await session.scalars(q.order_by(Invitation.id).limit(limit + 1))).all()
@@ -401,11 +415,125 @@ async def invitations(
                 "status": i.status,
                 "expires_at": i.expires_at,
                 "created_at": i.created_at,
+                "grants": i.initial_grants,
             }
             for i in rows[:limit]
         ],
         "next_cursor": rows[limit].id if len(rows) > limit else None,
     }
+
+
+@router.patch("/organizations/{tenant_id}/invitations/{invitation_id}")
+async def update_invitation(
+    tenant_id: UUID,
+    invitation_id: UUID,
+    request: InvitationUpdate,
+    principal: Annotated[TrustedPrincipal, Depends(get_trusted_principal)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    """Replace a pending invitation with edited claims and a fresh token."""
+    actor = await _admin(session, principal.user_id, tenant_id)
+    old = await session.scalar(
+        select(Invitation)
+        .where(Invitation.id == invitation_id, Invitation.tenant_id == tenant_id)
+        .with_for_update()
+    )
+    if old is None:
+        raise HTTPException(404, "Invitation not found")
+    if old.status != "pending":
+        raise HTTPException(409, "Only pending invitations can be edited")
+    if request.role == MembershipRole.OWNER and actor.role != MembershipRole.OWNER:
+        raise HTTPException(403, "Only owners may invite owners")
+    collection_ids = {grant.collection_id for grant in request.grants}
+    if collection_ids:
+        valid = set(
+            (
+                await session.scalars(
+                    select(Collection.id).where(
+                        Collection.tenant_id == tenant_id,
+                        Collection.id.in_(collection_ids),
+                    )
+                )
+            ).all()
+        )
+        if valid != collection_ids:
+            raise HTTPException(404, "Collection not found")
+    old.status = "replaced"
+    token = token_urlsafe(48)
+    replacement = Invitation(
+        tenant_id=tenant_id,
+        email_normalized=request.email,
+        issuer=old.issuer,
+        role=request.role,
+        token_hash=sha256(token.encode()).hexdigest(),
+        expires_at=datetime.now(UTC)
+        + timedelta(hours=get_settings().invitation_expiration_hours),
+        created_by_user_id=principal.user_id,
+        initial_grants=[
+            {"collection_id": str(g.collection_id), "role": g.role.value}
+            for g in request.grants
+        ],
+    )
+    session.add(replacement)
+    await session.flush()
+    session.add(
+        _audit(
+            tenant_id,
+            principal.user_id,
+            actor.role.value,
+            "invitation.edited",
+            "invitation",
+            old.id,
+            metadata={"new_role": request.role.value},
+        )
+    )
+    await session.commit()
+    return {
+        "id": replacement.id,
+        "status": replacement.status,
+        "expires_at": replacement.expires_at,
+        "invitation_link": f"/invitations/accept?token={token}",
+    }
+
+
+@router.post(
+    "/organizations/{tenant_id}/invitations/{invitation_id}/remove",
+    status_code=204,
+)
+async def remove_invitation(
+    tenant_id: UUID,
+    invitation_id: UUID,
+    principal: Annotated[TrustedPrincipal, Depends(get_trusted_principal)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    actor = await _admin(session, principal.user_id, tenant_id)
+    item = await session.scalar(
+        select(Invitation)
+        .where(Invitation.id == invitation_id, Invitation.tenant_id == tenant_id)
+        .with_for_update()
+    )
+    if item is None:
+        raise HTTPException(404, "Invitation not found")
+    if item.status == "removed":
+        return
+    if item.status == "accepted":
+        raise HTTPException(409, "Accepted users must be managed as members")
+    item.status = "removed"
+    item.removed_at = datetime.now(UTC)
+    item.revoked_at = item.revoked_at or item.removed_at
+    item.token_hash = sha256(token_urlsafe(48).encode()).hexdigest()
+    item.email_normalized = f"removed-{item.id}@redacted.invalid"
+    session.add(
+        _audit(
+            tenant_id,
+            principal.user_id,
+            actor.role.value,
+            "invitation.removed",
+            "invitation",
+            item.id,
+        )
+    )
+    await session.commit()
 
 
 @router.post("/organizations/{tenant_id}/invitations/{invitation_id}/replace")
@@ -755,7 +883,12 @@ async def audit_events(
     if cursor:
         q = q.where(AuditEvent.id < cursor)
     if actor_id:
-        q = q.where(AuditEvent.actor_user_id == actor_id)
+        selected_member = await session.scalar(
+            select(Membership.user_id).where(
+                Membership.id == actor_id, Membership.tenant_id == tenant_id
+            )
+        )
+        q = q.where(AuditEvent.actor_user_id == (selected_member or actor_id))
     if action:
         q = q.where(AuditEvent.action == action)
     if target_type:
@@ -804,6 +937,149 @@ async def audit_events(
         ],
         "next_cursor": rows[limit].id if len(rows) > limit else None,
     }
+
+
+def _csv_safe(value: object | None) -> str:
+    text_value = "" if value is None else str(value)
+    if text_value.startswith(("=", "+", "-", "@", "\t", "\r")):
+        return "'" + text_value
+    return text_value
+
+
+@router.get("/organizations/{tenant_id}/audit-events/export")
+async def export_audit_events(
+    tenant_id: UUID,
+    principal: Annotated[TrustedPrincipal, Depends(get_trusted_principal)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    actor_id: UUID | None = None,
+    action: str | None = Query(None, max_length=100),
+    target_type: str | None = Query(None, max_length=50),
+    outcome: Literal["success", "denied", "failure"] | None = None,
+    from_date: datetime | None = None,
+    to_date: datetime | None = None,
+):
+    actor = await _admin(session, principal.user_id, tenant_id, Permission.VIEW_AUDIT)
+    settings = get_settings()
+    now = datetime.now(UTC)
+    start = from_date or now - timedelta(days=30)
+    end = to_date or now
+    if start > end:
+        raise HTTPException(422, "Audit start must not follow end")
+    if end - start > timedelta(days=settings.audit_export_max_days):
+        raise HTTPException(
+            422,
+            f"Audit export range cannot exceed {settings.audit_export_max_days} days",
+        )
+    previous = await session.scalar(
+        select(func.max(AuditEvent.created_at)).where(
+            AuditEvent.tenant_id == tenant_id,
+            AuditEvent.actor_user_id == principal.user_id,
+            AuditEvent.action == "audit.exported",
+        )
+    )
+    if previous is not None and now - previous < timedelta(
+        seconds=settings.audit_export_rate_limit_seconds
+    ):
+        raise HTTPException(429, "Audit export rate limit exceeded")
+    q = (
+        select(AuditEvent, User)
+        .outerjoin(User, User.id == AuditEvent.actor_user_id)
+        .where(
+            AuditEvent.tenant_id == tenant_id,
+            AuditEvent.created_at >= start,
+            AuditEvent.created_at <= end,
+        )
+    )
+    if actor_id:
+        selected_member = await session.scalar(
+            select(Membership.user_id).where(
+                Membership.id == actor_id, Membership.tenant_id == tenant_id
+            )
+        )
+        q = q.where(AuditEvent.actor_user_id == (selected_member or actor_id))
+    if action:
+        q = q.where(AuditEvent.action == action)
+    if target_type:
+        q = q.where(AuditEvent.target_type == target_type)
+    if outcome:
+        q = q.where(AuditEvent.outcome == outcome)
+    rows = (
+        await session.execute(
+            q.order_by(AuditEvent.created_at.asc(), AuditEvent.id.asc()).limit(
+                settings.audit_export_max_rows + 1
+            )
+        )
+    ).all()
+    if len(rows) > settings.audit_export_max_rows:
+        raise HTTPException(
+            422,
+            "Audit export exceeds the configured row limit; narrow the filters",
+        )
+    session.add(
+        _audit(
+            tenant_id,
+            principal.user_id,
+            actor.role.value,
+            "audit.exported",
+            "audit_log",
+            None,
+        )
+    )
+    await session.commit()
+
+    def csv_rows():
+        buffer = io.StringIO()
+        writer = csv.writer(buffer, lineterminator="\n")
+        writer.writerow(
+            (
+                "timestamp_utc",
+                "actor",
+                "action",
+                "target_type",
+                "target_id",
+                "outcome",
+                "request_id",
+            )
+        )
+        yield buffer.getvalue()
+        for event, event_actor in rows:
+            buffer.seek(0)
+            buffer.truncate(0)
+            identity = (
+                event_actor.display_name
+                or event_actor.email
+                or str(event.actor_user_id)
+                if event_actor is not None
+                else "Anonymized identity"
+            )
+            writer.writerow(
+                tuple(
+                    _csv_safe(value)
+                    for value in (
+                        event.created_at.astimezone(UTC)
+                        .isoformat()
+                        .replace("+00:00", "Z"),
+                        identity,
+                        event.action,
+                        event.target_type,
+                        event.target_id,
+                        event.outcome,
+                        event.request_id,
+                    )
+                )
+            )
+            yield buffer.getvalue()
+
+    filename = f"atlas-audit-{start.date().isoformat()}-to-{end.date().isoformat()}.csv"
+    return StreamingResponse(
+        csv_rows(),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.put(

@@ -112,7 +112,7 @@ async function mock(page: Page) {
 
 test("owner administers members, invitations, audit and analytics accessibly", async ({
   page,
-}) => {
+}, testInfo) => {
   await mock(page);
   await page.goto("/admin/members");
   await expect(
@@ -122,15 +122,19 @@ test("owner administers members, invitations, audit and analytics accessibly", a
   await page.locator(".admin-form select").nth(1).selectOption(collection);
   await page.getByRole("button", { name: "Save access" }).click();
   await expect(page.getByText("Collection access updated.")).toBeVisible();
+  await page.screenshot({ path: `qa/members-${testInfo.project.name}.png`, fullPage: true });
   await page.goto("/admin/invitations");
   await page.getByLabel("Email").fill("invitee@example.test");
   await page.getByRole("button", { name: "Create invitation" }).click();
   await expect(page.getByLabel("One-time invitation link")).toHaveValue(
     /one-time-synthetic/,
   );
+  await page.screenshot({ path: `qa/invitations-${testInfo.project.name}.png`, fullPage: true });
   await page.goto("/admin/audit");
   await expect(page.getByText("collection_grant.changed")).toBeVisible();
+  await page.screenshot({ path: `qa/audit-${testInfo.project.name}.png`, fullPage: true });
   await page.goto("/admin/analytics");
   await expect(page.getByText("Active users")).toBeVisible();
+  await page.screenshot({ path: `qa/analytics-${testInfo.project.name}.png`, fullPage: true });
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 });

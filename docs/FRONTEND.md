@@ -1,5 +1,12 @@
 # Production frontend
 
+The responsive Atlas shell provides an overview dashboard, chat, searchable and
+filterable documents, members/grants, invitations, audit activity, and analytics.
+Multi-upload accepts PDF/DOCX only, defaults to 20 files and 100 MiB per batch, and
+runs three uploads concurrently while preserving per-file status and retries.
+Keyboard focus, semantic dialogs/forms, reduced motion, mobile navigation, and
+WCAG AA color contrast are supported.
+
 Milestone 13 adds a strict-TypeScript Next.js App Router application in
 `frontend/`. It is an authenticated enterprise workspace, not a public marketing
 site. The primary routes are `/chat` and `/documents`; `/`, `/session-expired` and

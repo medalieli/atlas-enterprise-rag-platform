@@ -179,6 +179,9 @@ test("document lifecycle, permissions, mobile navigation and accessibility", asy
   await expect(
     details.getByRole("listitem").getByText("Version 2"),
   ).toBeVisible();
+  await details.getByRole("button", { name: "Delete" }).click();
+  await page.screenshot({ path: `qa/document-delete-${testInfo.project.name}.png`, fullPage: true });
+  await page.getByRole("dialog").last().getByRole("button", { name: "Cancel" }).click();
   await details.getByRole("button", { name: "Close dialog" }).click();
   await page.getByRole("button", { name: /Upload document/ }).click();
   await page.getByLabel("PDF or DOCX").setInputFiles({
@@ -186,7 +189,7 @@ test("document lifecycle, permissions, mobile navigation and accessibility", asy
     mimeType: "application/pdf",
     buffer: Buffer.from("%PDF-1.4 synthetic"),
   });
-  await page.getByRole("button", { name: "Upload", exact: true }).click();
+  await page.getByRole("button", { name: /Upload 1 file/ }).click();
   await expect(page.getByRole("dialog")).toBeHidden();
   if (testInfo.project.name === "mobile") {
     await page.getByRole("button", { name: "Open navigation" }).click();
@@ -216,4 +219,29 @@ test("conversation, follow-up, citation and logout", async ({
     path: `qa/citation-${testInfo.project.name}.png`,
     fullPage: true,
   });
+});
+
+test("multiple document selection keeps individual queue states", async ({ page }, testInfo) => {
+  await mock(page);
+  await page.goto("/documents");
+  await page.getByRole("button", { name: /Upload document/ }).first().click();
+  await page.getByLabel(/Drop PDF or DOCX files here/).setInputFiles([
+    { name: "one.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF one") },
+    { name: "two.docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", buffer: Buffer.from("PK docx") },
+    { name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("invalid") },
+  ]);
+  await expect(page.getByRole("list", { name: "Upload queue" }).getByRole("listitem")).toHaveCount(3);
+  await expect(page.getByText("Only PDF and DOCX files are supported.")).toBeVisible();
+  await page.screenshot({ path: `qa/multi-upload-${testInfo.project.name}.png`, fullPage: true });
+  await page.getByRole("button", { name: "Remove notes.txt" }).click();
+  await page.getByRole("button", { name: /Upload 2 file/ }).click();
+  await expect(page.getByRole("dialog")).toBeHidden();
+});
+
+test("workspace dashboard summarizes the current collection", async ({ page }, testInfo) => {
+  await mock(page);
+  await page.goto("/dashboard");
+  await expect(page.getByRole("heading", { name: "Operations Library" })).toBeVisible();
+  await expect(page.getByText("Ready documents")).toBeVisible();
+  await page.screenshot({ path: `qa/dashboard-${testInfo.project.name}.png`, fullPage: true });
 });

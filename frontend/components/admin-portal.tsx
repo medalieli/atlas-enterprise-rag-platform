@@ -7,6 +7,7 @@ import { api, type Collection } from "@/lib/api";
 export type AdminView = "members" | "invitations" | "audit" | "analytics";
 type Member = {
   id: string;
+  principal_id: string;
   email: string | null;
   display_name: string | null;
   role: "owner" | "admin" | "member";
@@ -19,6 +20,7 @@ type Invitation = {
   role: string;
   status: string;
   expires_at: string;
+  grants: { collection_id: string; role: string }[];
 };
 type Audit = {
   id: string;
@@ -27,6 +29,9 @@ type Audit = {
   target_type: string;
   outcome: string;
   created_at: string;
+  actor_role?: string | null;
+  target_id?: string | null;
+  request_id?: string | null;
 };
 type Analytics = {
   period_days: number;
@@ -69,10 +74,32 @@ export function AdminPortal({
   const [grantMember, setGrantMember] = useState("");
   const [grantCollection, setGrantCollection] = useState("");
   const [grantRole, setGrantRole] = useState("viewer");
+  const [invitationFilter, setInvitationFilter] = useState("active");
+  const [editing, setEditing] = useState<Invitation>();
+  const [editEmail, setEditEmail] = useState("");
+  const [editRole, setEditRole] = useState("member");
+  const [editCollection, setEditCollection] = useState("");
+  const [editGrantRole, setEditGrantRole] = useState("viewer");
+  const [auditActor, setAuditActor] = useState("");
+  const [auditAction, setAuditAction] = useState("");
+  const [auditTarget, setAuditTarget] = useState("");
+  const [auditOutcome, setAuditOutcome] = useState("");
+  const [auditFrom, setAuditFrom] = useState("");
+  const [auditTo, setAuditTo] = useState("");
+  function auditQuery() {
+    const params = new URLSearchParams({ limit: "100" });
+    if (auditActor) params.set("actor_id", auditActor);
+    if (auditAction) params.set("action", auditAction);
+    if (auditTarget) params.set("target_type", auditTarget);
+    if (auditOutcome) params.set("outcome", auditOutcome);
+    if (auditFrom) params.set("from_date", new Date(auditFrom).toISOString());
+    if (auditTo) params.set("to_date", new Date(auditTo).toISOString());
+    return params;
+  }
   async function load() {
     setError("");
     try {
-      if (view === "members")
+      if (view === "members" || view === "audit")
         setMembers(
           (
             await api<{ items: Member[] }>(
@@ -84,7 +111,7 @@ export function AdminPortal({
         setInvitations(
           (
             await api<{ items: Invitation[] }>(
-              `/organizations/${tenantId}/invitations?limit=100`,
+              `/organizations/${tenantId}/invitations?limit=100&invitation_status=${invitationFilter}`,
             )
           ).items,
         );
@@ -92,7 +119,7 @@ export function AdminPortal({
         setEvents(
           (
             await api<{ items: Audit[] }>(
-              `/organizations/${tenantId}/audit-events?limit=100`,
+              `/organizations/${tenantId}/audit-events?${auditQuery()}`,
             )
           ).items,
         );
@@ -106,7 +133,7 @@ export function AdminPortal({
   }
   useEffect(() => {
     void load();
-  }, [view, tenantId]);
+  }, [view, tenantId, invitationFilter]);
   async function update(
     member: Member,
     next: Partial<Pick<Member, "role" | "status">>,
@@ -131,6 +158,7 @@ export function AdminPortal({
         error={error}
         notice={notice}
       >
+        <div className="filter-bar"><label>Invitation status<select value={invitationFilter} onChange={(event) => setInvitationFilter(event.target.value)}><option value="active">Active</option><option value="accepted">Accepted</option><option value="expired">Expired</option><option value="revoked">Revoked</option><option value="removed">Removed</option></select></label></div>
         <div className="panel table-panel">
           <table>
             <thead>
@@ -327,7 +355,7 @@ export function AdminPortal({
                   <td>{new Date(i.expires_at).toLocaleString()}</td>
                   <td>
                     {i.status === "pending" && (
-                      <button
+                      <><button onClick={() => { setEditing(i); setEditEmail(i.email); setEditRole(i.role); setEditCollection(i.grants?.[0]?.collection_id ?? ""); setEditGrantRole(i.grants?.[0]?.role ?? "viewer"); }}>Edit</button><button
                         onClick={async () => {
                           if (!confirm("Revoke this invitation?")) return;
                           try {
@@ -343,7 +371,7 @@ export function AdminPortal({
                         }}
                       >
                         Revoke
-                      </button>
+                      </button></>
                     )}
                     {["pending", "expired"].includes(i.status) && (
                       <button
@@ -368,12 +396,14 @@ export function AdminPortal({
                         Replace
                       </button>
                     )}
+                    {i.status !== "accepted" && i.status !== "removed" && <button className="danger" onClick={async () => { if (!confirm("Remove and redact this invitation? Its token will stop working and audit history will remain.")) return; try { await api(`/organizations/${tenantId}/invitations/${i.id}/remove`, { method: "POST" }); setNotice("Invitation removed and its email redacted."); void load(); } catch { setError("Invitation could not be removed."); } }}>Remove</button>}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+        {editing && <form className="panel admin-form" onSubmit={async (event) => { event.preventDefault(); try { const result = await api<{ invitation_link: string }>(`/organizations/${tenantId}/invitations/${editing.id}`, { method: "PATCH", body: JSON.stringify({ email: editEmail, role: editRole, grants: editCollection ? [{ collection_id: editCollection, role: editGrantRole }] : [] }) }); setLink(`${window.location.origin}${result.invitation_link}`); setEditing(undefined); setNotice("Invitation updated. The previous token is invalid; copy the new link now."); void load(); } catch { setError("Invitation could not be updated."); } }}><h2>Edit pending invitation</h2><label>Email<input type="email" required value={editEmail} onChange={(event) => setEditEmail(event.target.value)} /></label><label>Organization role<select value={editRole} onChange={(event) => setEditRole(event.target.value)}><option value="member">Member</option><option value="admin">Admin</option></select></label><label>Initial collection<select value={editCollection} onChange={(event) => setEditCollection(event.target.value)}><option value="">No initial grant</option>{collections.map((collection) => <option key={collection.id} value={collection.id}>{collection.name}</option>)}</select></label><label>Collection role<select value={editGrantRole} onChange={(event) => setEditGrantRole(event.target.value)}><option value="viewer">Viewer</option><option value="editor">Editor</option><option value="manager">Manager</option></select></label><button type="button" onClick={() => setEditing(undefined)}>Cancel</button><button className="button primary">Save and rotate token</button></form>}
       </AdminPage>
     );
   if (view === "audit")
@@ -384,6 +414,7 @@ export function AdminPortal({
         error={error}
         notice={notice}
       >
+        <form className="panel audit-filters" onSubmit={(event) => { event.preventDefault(); void load(); }}><label>Start (inclusive)<input type="datetime-local" value={auditFrom} onChange={(event) => setAuditFrom(event.target.value)} /></label><label>End (inclusive)<input type="datetime-local" value={auditTo} onChange={(event) => setAuditTo(event.target.value)} /></label><label>Actor<select value={auditActor} onChange={(event) => setAuditActor(event.target.value)}><option value="">All actors</option>{members.map((member) => <option key={member.id} value={member.id}>{member.display_name || member.email || "Anonymized identity"}</option>)}</select></label><label>Action<input value={auditAction} onChange={(event) => setAuditAction(event.target.value)} placeholder="Exact action" /></label><label>Target type<input value={auditTarget} onChange={(event) => setAuditTarget(event.target.value)} placeholder="e.g. document" /></label><label>Outcome<select value={auditOutcome} onChange={(event) => setAuditOutcome(event.target.value)}><option value="">All outcomes</option><option>success</option><option>denied</option><option>failure</option></select></label><button className="button primary">Apply filters</button><a className="button" href={`/api/backend/organizations/${tenantId}/audit-events/export?${auditQuery()}`}>Export filtered CSV</a></form>
         <div className="panel table-panel">
           <table>
             <thead>

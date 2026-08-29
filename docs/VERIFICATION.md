@@ -88,11 +88,12 @@ Residual risks are the vendor-deferred unreachable image findings, inline CSP bo
 ## Post-v1 enterprise verification
 
 The enterprise upgrade is verified separately from the completed 15-milestone
-roadmap. The final local run passed 187 backend tests against PostgreSQL/pgvector,
-19 frontend unit tests, and eight Playwright desktop/mobile scenarios. Ruff, Python
+roadmap. The final workspace-finishing run passed 188 backend tests against
+PostgreSQL/pgvector, 19 frontend unit tests, and 12 Playwright desktop/mobile
+scenarios. Ruff, Python
 compilation, ESLint, strict TypeScript, the production frontend build, frozen locks,
 Compose validation, and a 14-case deterministic evaluation (zero provider calls)
-passed. Revision `d4e5f6a7b8c9` passed current/check, downgrade, upgrade, and repeated
+passed. Revision `e5f6a7b8c9d0` passed current/check, downgrade, upgrade, and repeated
 upgrade on the disposable production-like database.
 
 Both final application images built and all ten hardened production-overlay services

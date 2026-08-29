@@ -1,5 +1,12 @@
 # Authentication and tenant authorization
 
+Unauthenticated application requests redirect to `/login`, preserving a safe
+relative destination. Authenticated visits to `/login` enter Atlas and logout
+returns to the login experience. Atlas never receives or stores passwords; the
+external OIDC provider owns credentials, reset, and MFA. PKCE, state validation,
+trusted callback origins, HTTP-only session cookies, and mutation CSRF checks remain
+mandatory.
+
 Milestone 10 treats FastAPI as an OAuth 2.0 protected resource. The API validates
 access tokens issued by a configured external OAuth/OIDC authorization server; it
 does not register passwords, authenticate credentials, issue tokens, store refresh

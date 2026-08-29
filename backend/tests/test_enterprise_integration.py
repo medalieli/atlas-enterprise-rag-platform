@@ -128,3 +128,85 @@ async def test_invitation_hash_acceptance_grant_revocation_and_audit_immutabilit
                 delete(Organization).where(Organization.id == tenant_id)
             )
             await session.execute(delete(User).where(User.issuer == issuer))
+
+
+async def test_invitation_edit_removal_and_filtered_csv_export() -> None:
+    tenant_id, owner_id, collection_id = uuid4(), uuid4(), uuid4()
+    issuer = "https://issuer.finishing.test"
+    async with session_factory() as session, session.begin():
+        session.add(Organization(id=tenant_id, name="Finishing", slug=f"f-{tenant_id}"))
+        session.add(
+            User(
+                id=owner_id,
+                issuer=issuer,
+                subject="owner",
+                email="=formula@example.test",
+                display_name="=Formula",
+            )
+        )
+        await session.flush()
+        session.add(
+            Membership(tenant_id=tenant_id, user_id=owner_id, role=MembershipRole.OWNER)
+        )
+        session.add(Collection(id=collection_id, tenant_id=tenant_id, name="Policies"))
+    app.dependency_overrides[get_trusted_principal] = lambda: TrustedPrincipal(
+        tenant_id, owner_id
+    )
+    app.dependency_overrides[verify_external_identity] = lambda: ExternalIdentity(
+        issuer, "invitee", "changed@example.test", True
+    )
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            created = await client.post(
+                f"/organizations/{tenant_id}/invitations",
+                json={"email": "old@example.test", "role": "member", "grants": []},
+            )
+            old_token = parse_qs(urlparse(created.json()["invitation_link"]).query)[
+                "token"
+            ][0]
+            edited = await client.patch(
+                f"/organizations/{tenant_id}/invitations/{created.json()['id']}",
+                json={
+                    "email": "changed@example.test",
+                    "role": "admin",
+                    "grants": [{"collection_id": str(collection_id), "role": "editor"}],
+                },
+            )
+            assert edited.status_code == 200, edited.text
+            assert (
+                await client.post("/invitations/accept", json={"token": old_token})
+            ).status_code == 410
+            replacement_id = edited.json()["id"]
+            removed = await client.post(
+                f"/organizations/{tenant_id}/invitations/{replacement_id}/remove"
+            )
+            assert removed.status_code == 204
+            active = await client.get(f"/organizations/{tenant_id}/invitations")
+            assert active.json()["items"] == []
+            removed_list = await client.get(
+                f"/organizations/{tenant_id}/invitations",
+                params={"invitation_status": "removed"},
+            )
+            assert removed_list.json()["items"][0]["email"].endswith(
+                "@redacted.invalid"
+            )
+            exported = await client.get(
+                f"/organizations/{tenant_id}/audit-events/export",
+                params={"action": "invitation.removed"},
+            )
+            assert exported.status_code == 200, exported.text
+            assert exported.headers["content-disposition"].startswith(
+                'attachment; filename="atlas-audit-'
+            )
+            assert "'=Formula" in exported.text
+            assert "invitation.removed" in exported.text
+            assert "old@example.test" not in exported.text
+    finally:
+        app.dependency_overrides.clear()
+        async with session_factory() as session, session.begin():
+            await session.execute(
+                delete(Organization).where(Organization.id == tenant_id)
+            )
+            await session.execute(delete(User).where(User.issuer == issuer))

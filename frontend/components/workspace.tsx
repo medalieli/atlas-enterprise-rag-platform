@@ -45,7 +45,7 @@ function Status({ value }: { value: string }) {
 export function Workspace({
   initialView,
 }: {
-  initialView: "chat" | "documents" | AdminView;
+  initialView: "dashboard" | "chat" | "documents" | AdminView;
 }) {
   const router = useRouter();
   const [identity, setIdentity] = useState<Identity>();
@@ -93,7 +93,7 @@ export function Workspace({
     try {
       await endSession();
     } finally {
-      router.push("/");
+      router.push("/login" as "/");
       router.refresh();
     }
   }
@@ -161,6 +161,7 @@ export function Workspace({
           <div className="sidebar-empty">No collections yet.</div>
         )}
         <nav>
+          <Link className={initialView === "dashboard" ? "active" : ""} href={"/dashboard" as "/chat"}>Overview</Link>
           <Link className={initialView === "chat" ? "active" : ""} href="/chat">
             ◫ <span>Chat</span>
           </Link>
@@ -235,6 +236,8 @@ export function Workspace({
             }
             onCreate={() => setCreateOpen(true)}
           />
+        ) : initialView === "dashboard" ? (
+          <Dashboard collectionId={collectionId} collection={collections.find((item) => item.id === collectionId)!} admin={!!membership && ["owner", "admin"].includes(membership.role)} />
         ) : initialView === "chat" ? (
           <Chat collectionId={collectionId} />
         ) : (
@@ -264,6 +267,14 @@ export function Workspace({
       )}
     </div>
   );
+}
+function Dashboard({ collectionId, collection, admin }: { collectionId: string; collection: Collection; admin: boolean }) {
+  const [documents, setDocuments] = useState<DocumentItem[]>([]);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  useEffect(() => { void Promise.all([api<DocumentItem[]>(`/collections/${collectionId}/documents`), api<{ conversations: Conversation[] }>(`/collections/${collectionId}/conversations`)]).then(([docs, chats]) => { setDocuments(docs); setConversations(chats.conversations); }); }, [collectionId]);
+  const ready = documents.filter((item) => item.status === "available").length;
+  const failed = documents.filter((item) => item.status === "failed").length;
+  return <><header className="page-head"><div><p className="eyebrow">WORKSPACE OVERVIEW</p><h1>{collection.name}</h1><p>{collection.description || "Your approved knowledge at a glance."}</p></div></header><div className="metric-grid"><div className="panel metric"><span>Ready documents</span><strong>{ready}</strong></div><div className="panel metric"><span>Recent conversations</span><strong>{conversations.length}</strong></div><div className="panel metric"><span>Ingestion failures</span><strong>{failed}</strong></div><div className="panel metric"><span>Collection access</span><strong className="role-metric">{collection.access_role}</strong></div></div><section className="panel dashboard-panel"><h2>Continue working</h2><p>Ask evidence-grounded questions or keep this collection’s source material current.</p><div className="dashboard-actions"><Link className="button primary" href="/chat">Open chat</Link><Link className="button" href="/documents">Manage documents</Link>{admin && <Link className="button" href="/admin/analytics">Organization analytics</Link>}</div></section></>;
 }
 function EmptyCollections({
   admin,
@@ -380,6 +391,8 @@ function Documents({
   const [selected, setSelected] = useState<DocumentItem>();
   const [upload, setUpload] = useState(false);
   const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
   const reload = async () => {
     try {
       setDocs(
@@ -411,6 +424,7 @@ function Documents({
           {error}
         </div>
       )}
+      {!!docs.length && <div className="filter-bar" role="search"><label>Search documents<input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Filename" /></label><label>Status<select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">All statuses</option>{Array.from(new Set(docs.map((doc) => doc.status))).map((value) => <option key={value}>{value}</option>)}</select></label></div>}
       {!docs.length ? (
         <section className="empty panel">
           <div className="empty-icon">▤</div>
@@ -442,7 +456,7 @@ function Documents({
               </tr>
             </thead>
             <tbody>
-              {docs.map((d) => (
+              {docs.filter((doc) => (statusFilter === "all" || doc.status === statusFilter) && (doc.filename ?? "").toLowerCase().includes(search.toLowerCase())).map((d) => (
                 <tr key={d.id}>
                   <td>
                     <b>{d.filename || "Processing upload"}</b>
@@ -494,6 +508,9 @@ function Documents({
     </>
   );
 }
+type UploadItem = { id: string; file: File; status: string; error?: string; jobId?: string };
+const MAX_BATCH_FILES = 20, MAX_FILE_BYTES = 20 * 1024 * 1024, MAX_BATCH_BYTES = 100 * 1024 * 1024, UPLOAD_CONCURRENCY = 3;
+
 function Upload({
   collectionId,
   onClose,
@@ -505,80 +522,83 @@ function Upload({
   onDone(): void;
   replacement?: string;
 }) {
-  const [file, setFile] = useState<File>();
+  const [items, setItems] = useState<UploadItem[]>([]);
   const [metadata, setMetadata] = useState("");
-  const [status, setStatus] = useState("");
   const [error, setError] = useState("");
-  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  useEffect(() => () => clearTimeout(timer.current), []);
-  async function poll(job: string, n = 0) {
-    if (n >= 60) {
-      setError("Processing is taking longer than expected. Check again later.");
-      return;
+  const [running, setRunning] = useState(false);
+  function addFiles(files: File[]) {
+    setError("");
+    const accepted = replacement ? files.slice(0, 1) : files;
+    if (accepted.length + items.length > (replacement ? 1 : MAX_BATCH_FILES)) return setError(`Select no more than ${replacement ? 1 : MAX_BATCH_FILES} files.`);
+    const seen = new Set(items.map((x) => `${x.file.name}:${x.file.size}:${x.file.lastModified}`));
+    const next: UploadItem[] = [];
+    for (const file of accepted) {
+      const signature = `${file.name}:${file.size}:${file.lastModified}`;
+      if (seen.has(signature)) { setError("Duplicate files were ignored."); continue; }
+      seen.add(signature);
+      const validType = file.name.toLowerCase().endsWith(".pdf") || file.name.toLowerCase().endsWith(".docx");
+      next.push({ id: crypto.randomUUID(), file, status: !validType ? "invalid type" : file.size > MAX_FILE_BYTES ? "too large" : "queued", error: !validType ? "Only PDF and DOCX files are supported." : file.size > MAX_FILE_BYTES ? "File exceeds the 20 MB limit." : undefined });
     }
+    if ([...items, ...next].reduce((sum, x) => sum + x.file.size, 0) > MAX_BATCH_BYTES) return setError("The batch exceeds the 100 MB total limit.");
+    setItems((current) => [...current, ...next]);
+  }
+  async function poll(id: string, job: string) {
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      const result = await api<{ status: string; error_message: string | null }>(`/processing-jobs/${job}`);
+      setItems((current) => current.map((x) => x.id === id ? { ...x, status: result.status, error: result.error_message ?? undefined } : x));
+      if (terminal.has(result.status)) return result.status === "succeeded";
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+    throw new Error("Processing is taking longer than expected.");
+  }
+  async function uploadOne(item: UploadItem) {
+    setItems((current) => current.map((x) => x.id === item.id ? { ...x, status: "uploading", error: undefined } : x));
+    const body = new FormData(); body.set("file", item.file); if (metadata.trim()) body.set("metadata", metadata);
     try {
-      const result = await api<{
-        status: string;
-        error_message: string | null;
-      }>(`/processing-jobs/${job}`);
-      setStatus(result.status);
-      if (terminal.has(result.status)) {
-        if (result.status === "succeeded") onDone();
-        else
-          setError(
-            "Processing failed. The source was not activated; retry with a valid document.",
-          );
-      } else timer.current = setTimeout(() => void poll(job, n + 1), 2000);
-    } catch (e) {
-      setError(errorText(e));
+      const path = replacement ? `/collections/${collectionId}/documents/${replacement}/versions` : `/collections/${collectionId}/documents`;
+      const result = await api<{ job_id: string }>(path, { method: "POST", body, headers: { "idempotency-key": key() } });
+      setItems((current) => current.map((x) => x.id === item.id ? { ...x, status: "queued", jobId: result.job_id } : x));
+      return await poll(item.id, result.job_id);
+    } catch (caught) {
+      setItems((current) => current.map((x) => x.id === item.id ? { ...x, status: "failed", error: errorText(caught) } : x));
+      return false;
     }
+  }
+  async function start() {
+    if (metadata.trim()) { try { JSON.parse(metadata); } catch { return setError("Metadata must be valid JSON."); } }
+    const queue = items.filter((x) => x.status === "queued" || x.status === "failed");
+    if (!queue.length) return;
+    setRunning(true); let cursor = 0;
+    const results: boolean[] = [];
+    async function worker() { while (cursor < queue.length) { const item = queue[cursor++]; results.push(await uploadOne(item)); } }
+    await Promise.all(Array.from({ length: Math.min(UPLOAD_CONCURRENCY, queue.length) }, worker));
+    setRunning(false);
+    if (results.every(Boolean)) onDone();
+    else setError(`${results.filter(Boolean).length} file(s) succeeded and ${results.filter((value) => !value).length} failed. Successful documents were kept; retry failed files individually.`);
   }
   return (
     <Dialog
       title={replacement ? "Upload replacement" : "Upload document"}
       onClose={onClose}
     >
-      <form
-        onSubmit={async (e) => {
-          e.preventDefault();
-          if (!file) return;
-          setStatus("uploading");
-          const body = new FormData();
-          body.set("file", file);
-          if (metadata.trim()) {
-            try {
-              JSON.parse(metadata);
-              body.set("metadata", metadata);
-            } catch {
-              setError("Metadata must be valid JSON.");
-              return;
-            }
-          }
-          try {
-            const path = replacement
-              ? `/collections/${collectionId}/documents/${replacement}/versions`
-              : `/collections/${collectionId}/documents`;
-            const result = await api<{ job_id: string }>(path, {
-              method: "POST",
-              body,
-              headers: replacement ? { "idempotency-key": key() } : undefined,
-            });
-            setStatus("queued");
-            void poll(result.job_id);
-          } catch (x) {
-            setError(errorText(x));
-          }
-        }}
-      >
-        <label>
-          PDF or DOCX
+      <form onSubmit={(event) => { event.preventDefault(); void start(); }}>
+        <label className="drop-zone" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); addFiles(Array.from(event.dataTransfer.files)); }}>
+          <strong>{replacement ? "Choose a replacement" : "Drop PDF or DOCX files here"}</strong>
+          <span>or select files · {replacement ? "one file" : `${MAX_BATCH_FILES} files / 100 MB per batch`}</span>
           <input
             type="file"
-            required
+            multiple={!replacement}
             accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            onChange={(e) => setFile(e.target.files?.[0])}
+            onChange={(e) => { addFiles(Array.from(e.target.files ?? [])); e.currentTarget.value = ""; }}
           />
         </label>
+        {!!items.length && <ul className="upload-queue" aria-label="Upload queue">{items.map((item) => <li key={item.id}>
+          <span><strong>{item.file.name}</strong><small>{(item.file.size / 1024 / 1024).toFixed(1)} MB</small></span>
+          <Status value={item.status} />
+          {item.error && <small className="field-error">{item.error}</small>}
+          {!running && ["queued", "failed", "invalid type", "too large"].includes(item.status) && <button type="button" aria-label={`Remove ${item.file.name}`} onClick={() => setItems((current) => current.filter((x) => x.id !== item.id))}>Remove</button>}
+          {!running && item.status === "failed" && <button type="button" onClick={() => { setItems((current) => current.map((x) => x.id === item.id ? { ...x, status: "queued", error: undefined } : x)); }}>Retry</button>}
+        </li>)}</ul>}
         <label>
           Metadata <span className="optional">optional JSON</span>
           <textarea
@@ -587,11 +607,7 @@ function Upload({
             onChange={(e) => setMetadata(e.target.value)}
           />
         </label>
-        {status && (
-          <div className="progress" aria-live="polite">
-            <span className="spinner" /> {status.replaceAll("_", " ")}
-          </div>
-        )}
+        {running && <div className="progress" aria-live="polite"><span className="spinner" /> Uploading up to three files at a time</div>}
         {error && (
           <p className="field-error" role="alert">
             {error}
@@ -603,9 +619,9 @@ function Upload({
           </button>
           <button
             className="button primary"
-            disabled={!!status && !terminal.has(status)}
+            disabled={running || !items.some((x) => x.status === "queued" || x.status === "failed")}
           >
-            {replacement ? "Replace" : "Upload"}
+            {replacement ? "Replace" : `Upload ${items.filter((x) => x.status === "queued" || x.status === "failed").length || ""} file(s)`}
           </button>
         </div>
       </form>
@@ -626,6 +642,8 @@ function DocumentDetails({
   const [versions, setVersions] = useState<Version[]>([]);
   const [replace, setReplace] = useState(false);
   const [confirm, setConfirm] = useState(false);
+  const [confirmation, setConfirmation] = useState("");
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   useEffect(() => {
     void api<Version[]>(
@@ -635,6 +653,8 @@ function DocumentDetails({
       .catch((e) => setError(errorText(e)));
   }, [document]);
   async function action(kind: "reindex" | "delete") {
+    if (busy) return;
+    setBusy(true);
     try {
       await api(
         `/collections/${document.collection_id}/documents/${document.id}${kind === "reindex" ? "/reindex" : ""}`,
@@ -648,6 +668,8 @@ function DocumentDetails({
       onClose();
     } catch (e) {
       setError(errorText(e));
+    } finally {
+      setBusy(false);
     }
   }
   return (
@@ -696,7 +718,7 @@ function DocumentDetails({
         </p>
       )}
       <div className="dialog-actions split">
-        {role === "admin" && (
+        {["manager", "admin", "owner"].includes(role) && (
           <button className="danger" onClick={() => setConfirm(true)}>
             Delete
           </button>
@@ -728,13 +750,14 @@ function DocumentDetails({
       {confirm && (
         <Dialog title="Delete document?" onClose={() => setConfirm(false)}>
           <p>
-            This removes the source and indexed data. Historical citations
-            become deleted-source notices.
+            Permanently delete <strong>{document.filename || "this document"}</strong>? This irreversible action removes the source and every retrieval index. Historical citations remain only as redacted deleted-source notices.
           </p>
+          <label>Type DELETE to confirm<input autoComplete="off" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /></label>
           <div className="dialog-actions">
             <button onClick={() => setConfirm(false)}>Cancel</button>
             <button
               className="button danger-fill"
+              disabled={confirmation !== "DELETE" || busy}
               onClick={() => void action("delete")}
             >
               Delete document

@@ -182,6 +182,14 @@ unchanged.
 
 ## Troubleshooting
 
+## Post-v1 workspace experience
+
+Atlas provides OIDC-only login, a responsive enterprise workspace, bounded
+multi-document upload, existing Milestone 12 lifecycle controls, invitation
+editing/removal, and filtered CSV audit export. See the
+[enterprise finishing-pass guide](docs/POST_V1_ENTERPRISE_UPGRADE.md) for role and
+limit details. Atlas still stores no passwords and ships no default credentials.
+
 If Docker commands are unavailable or report that the daemon is not running, install/start Docker Desktop and verify with `docker --version` and `docker compose version`.
 
 If port 8000 or 5432 is occupied, set a different host port in `.env`, for example `API_PORT=8001` or `POSTGRES_PORT=5433`. Container-to-container ports and the Compose `DATABASE_URL` do not change.

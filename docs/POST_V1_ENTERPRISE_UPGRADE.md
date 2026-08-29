@@ -104,3 +104,30 @@ GET        /organizations/{tenant}/audit-events
 GET        /organizations/{tenant}/analytics?days=30&collection_id=...
 PUT        /collections/{collection}/conversations/{conversation}/messages/{answer}/feedback
 ```
+
+## Professional workspace finishing pass
+
+Atlas now uses a dedicated `/login` experience before any private workspace UI.
+It starts the existing OIDC Authorization Code with PKCE flow and preserves a
+validated relative return destination. Atlas hosts no password form, stores no
+passwords or browser tokens, and ships no default identity.
+
+The document workspace queues up to 20 PDF/DOCX files and 100 MiB per batch with
+three uploads in flight; the backend retains its 20 MiB per-file bound. Per-file
+validation, ingestion state, partial success, removal, and retry stay visible.
+
+Editing a pending invitation replaces its claims and rotates its single-use token.
+Removal invalidates the token, hides it from the active view, redacts email PII to
+a tombstone, and preserves immutable audit history. Accepted identities are managed
+through Memberships.
+
+Audit filters cover inclusive UTC dates, actor, action, target type, and outcome.
+CSV export is ordered and formula-safe, creates its own audit event, and is bounded
+by `AUDIT_EXPORT_MAX_DAYS` (366), `AUDIT_EXPORT_MAX_ROWS` (10,000), and
+`AUDIT_EXPORT_RATE_LIMIT_SECONDS` (30). Tokens, prompts, questions, answers, and
+document content are never exported.
+
+Atlas endpoints and the normal application database role cannot update or delete
+audit history because of the append-only trigger. This does not claim a database
+superuser or infrastructure owner is technically incapable of storage changes;
+backups and infrastructure access controls protect that wider trust boundary.

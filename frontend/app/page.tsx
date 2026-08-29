@@ -1,2 +1,2 @@
-import Link from "next/link";
-export default function Login() { return <main className="login"><section className="login-card"><div className="brand-mark">A</div><p className="eyebrow">ATLAS KNOWLEDGE</p><h1>Your organization’s answers, grounded in evidence.</h1><p className="muted">Search approved collections, follow every citation, and keep document knowledge current.</p><Link className="button primary wide" href="/api/auth/login">Continue with your organization</Link><p className="fine">Secure sign-in via your organization’s identity provider.</p></section></main>; }
+import { redirect } from "next/navigation";
+export default function Home() { redirect("/dashboard" as "/chat"); }
