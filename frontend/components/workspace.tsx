@@ -89,6 +89,12 @@ export function Workspace({
   useEffect(() => {
     if (collectionId) sessionStorage.setItem("collection", collectionId);
   }, [collectionId]);
+  useEffect(() => {
+    const adminView = (["members", "invitations", "audit", "analytics"] as string[]).includes(initialView);
+    if (identity && adminView && !identity.memberships.some((item) => ["owner", "admin"].includes(item.role))) {
+      router.replace("/dashboard" as "/chat");
+    }
+  }, [identity, initialView, router]);
   async function logout() {
     try {
       await endSession();

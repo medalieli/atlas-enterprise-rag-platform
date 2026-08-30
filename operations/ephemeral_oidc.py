@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import html
 import json
 import secrets
 import ssl
@@ -31,7 +32,14 @@ class Issuer(BaseHTTPRequestHandler):
     email = "atlas-admin@example.test"
     private_key: object
     jwks: dict[str, object]
-    codes: dict[str, tuple[str, str, float]] = {}
+    codes: dict[str, tuple[str, str, float, str, str]] = {}
+    interactive_identities = False
+    identities: dict[str, tuple[str, str]] = {
+        "owner": ("local-owner", "owner@atlas.example.test"),
+        "admin": ("local-admin", "admin@atlas.example.test"),
+        "editor": ("local-editor", "editor@atlas.example.test"),
+        "invitee": ("local-invitee", "invitee@atlas.example.test"),
+    }
 
     def send_json(self, status: int, value: object) -> None:
         body = json.dumps(value, separators=(",", ":")).encode()
@@ -80,8 +88,44 @@ class Issuer(BaseHTTPRequestHandler):
         if redirect != self.redirect_uri:
             self.send_error(HTTPStatus.BAD_REQUEST)
             return
+        identity_name = query.get("identity", [""])[0]
+        if self.interactive_identities and identity_name not in self.identities:
+            choices = []
+            for name in self.identities:
+                parameters = {key: values[0] for key, values in query.items()}
+                parameters["identity"] = name
+                href = html.escape(urlencode(parameters), quote=True)
+                choices.append(
+                    f'<li><a href="/authorize?{href}">'
+                    f'{html.escape(name.title())}</a></li>'
+                )
+            body = (
+                "<!doctype html><html><head>"
+                '<meta name="referrer" content="no-referrer">'
+                "<title>Local synthetic identity</title></head><body><main>"
+                "<h1>Select a synthetic identity</h1>"
+                "<p>Local verification only. No passwords are used.</p>"
+                f"<ul>{''.join(choices)}</ul></main></body></html>"
+            ).encode()
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        selected_subject, selected_email = self.identities.get(
+            identity_name, (self.subject, self.email)
+        )
         code = secrets.token_urlsafe(32)
-        self.codes[code] = (query["code_challenge"][0], redirect, time.time() + 120)
+        self.codes[code] = (
+            query["code_challenge"][0],
+            redirect,
+            time.time() + 120,
+            selected_subject,
+            selected_email,
+        )
         location = f"{redirect}?{urlencode({'code': code, 'state': query['state'][0]})}"
         self.send_response(HTTPStatus.FOUND)
         self.send_header("Location", location)
@@ -115,13 +159,13 @@ class Issuer(BaseHTTPRequestHandler):
         now = int(time.time())
         claims = {
             "iss": self.issuer,
-            "sub": self.subject,
+            "sub": record[3],
             "aud": "production-rag-assistant-api",
             "iat": now,
             "nbf": now - 1,
             "exp": now + 900,
             "scope": "openid profile email rag:access",
-            "email": self.email,
+            "email": record[4],
             "email_verified": True,
         }
         token = jwt.encode(
@@ -154,6 +198,7 @@ def main() -> None:
     parser.add_argument("--insecure-http", action="store_true")
     parser.add_argument("--subject", default="m15-admin")
     parser.add_argument("--email", default="atlas-admin@example.test")
+    parser.add_argument("--interactive-identities", action="store_true")
     parser.add_argument("--redirect-uri", default="https://localhost/api/auth/callback")
     args = parser.parse_args()
     private_key = serialization.load_pem_private_key(
@@ -170,6 +215,11 @@ def main() -> None:
     Issuer.redirect_uri = args.redirect_uri
     Issuer.subject = args.subject
     Issuer.email = args.email.strip().lower()
+    Issuer.identities = {
+        **Issuer.identities,
+        "owner": (Issuer.subject, Issuer.email),
+    }
+    Issuer.interactive_identities = args.interactive_identities
     server = ThreadingHTTPServer(("0.0.0.0", args.port), Issuer)
     if not args.insecure_http:
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)

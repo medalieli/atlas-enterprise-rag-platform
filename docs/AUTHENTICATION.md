@@ -66,6 +66,22 @@ collection. The exact matrices and invitation flow are documented in
 Atlas never creates or stores passwords and provides no password-reset or MFA
 workflow. Those controls remain exclusively with the configured OIDC provider.
 
+Invitation links land on a public, non-enumerating page. The one-time capability is
+carried in a URL fragment, immediately exchanged for a 15-minute encrypted,
+HttpOnly continuation cookie, and removed from browser-visible history before OIDC
+starts. After Authorization Code + PKCE completes, the BFF returns to that landing
+page. Atlas still requires the configured issuer, an exact canonical email match,
+and `email_verified=true`; a wrong signed-in identity receives sign-out-and-retry
+guidance without disclosure of the invited address. The same accepted subject may
+replay acceptance idempotently, while every other replay remains unavailable.
+
+For local verification only, start `operations/ephemeral_oidc.py` with
+`--interactive-identities`. Its authorization page can deterministically select the
+synthetic owner, admin, editor, or invitee profiles. Create the invitation for the
+selected invitee profile, then choose **Invitee** in a completely new browser
+context. These immutable synthetic subjects are not production credentials, use no
+passwords, and are unavailable unless the test-only utility is started explicitly.
+
 Permissions are centralized as `tenant:read`, `document:upload` and
 `collection:manage`. Unknown/missing resources and cross-tenant resources return the
 same `404`. Valid identities lacking a general role permission receive `403`.

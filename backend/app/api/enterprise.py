@@ -358,7 +358,7 @@ async def create_invitation(
         "id": invitation.id,
         "status": invitation.status,
         "expires_at": invitation.expires_at,
-        "invitation_link": f"/invitations/accept?token={token}",
+        "invitation_link": f"/invitations/accept#token={token}",
     }
 
 
@@ -431,7 +431,7 @@ async def update_invitation(
     principal: Annotated[TrustedPrincipal, Depends(get_trusted_principal)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
-    """Replace a pending invitation with edited claims and a fresh token."""
+    """Edit pending claims, rotating the token only when the email changes."""
     actor = await _admin(session, principal.user_id, tenant_id)
     old = await session.scalar(
         select(Invitation)
@@ -458,21 +458,46 @@ async def update_invitation(
         )
         if valid != collection_ids:
             raise HTTPException(404, "Collection not found")
+    normalized_email = str(request.email).strip().lower()
+    grants = [
+        {"collection_id": str(g.collection_id), "role": g.role.value}
+        for g in request.grants
+    ]
+    if normalized_email == old.email_normalized:
+        old.role = request.role
+        old.initial_grants = grants
+        session.add(
+            _audit(
+                tenant_id,
+                principal.user_id,
+                actor.role.value,
+                "invitation.edited",
+                "invitation",
+                old.id,
+                metadata={"new_role": request.role.value, "token_rotated": False},
+            )
+        )
+        await session.commit()
+        return {
+            "id": old.id,
+            "status": old.status,
+            "expires_at": old.expires_at,
+            "invitation_link": None,
+            "token_rotated": False,
+        }
+
     old.status = "replaced"
     token = token_urlsafe(48)
     replacement = Invitation(
         tenant_id=tenant_id,
-        email_normalized=request.email,
+        email_normalized=normalized_email,
         issuer=old.issuer,
         role=request.role,
         token_hash=sha256(token.encode()).hexdigest(),
         expires_at=datetime.now(UTC)
         + timedelta(hours=get_settings().invitation_expiration_hours),
         created_by_user_id=principal.user_id,
-        initial_grants=[
-            {"collection_id": str(g.collection_id), "role": g.role.value}
-            for g in request.grants
-        ],
+        initial_grants=grants,
     )
     session.add(replacement)
     await session.flush()
@@ -484,7 +509,7 @@ async def update_invitation(
             "invitation.edited",
             "invitation",
             old.id,
-            metadata={"new_role": request.role.value},
+            metadata={"new_role": request.role.value, "token_rotated": True},
         )
     )
     await session.commit()
@@ -492,7 +517,8 @@ async def update_invitation(
         "id": replacement.id,
         "status": replacement.status,
         "expires_at": replacement.expires_at,
-        "invitation_link": f"/invitations/accept?token={token}",
+        "invitation_link": f"/invitations/accept#token={token}",
+        "token_rotated": True,
     }
 
 
@@ -583,7 +609,7 @@ async def replace_invitation(
         "id": replacement.id,
         "status": replacement.status,
         "expires_at": replacement.expires_at,
-        "invitation_link": f"/invitations/accept?token={token}",
+        "invitation_link": f"/invitations/accept#token={token}",
     }
 
 
@@ -637,8 +663,27 @@ async def accept_invitation(
         raise HTTPException(404, "Invitation not found")
     if item.attempt_count >= 10:
         raise HTTPException(410, "Invitation is unavailable")
+    if item.status == "accepted":
+        accepted_user = await session.get(User, item.accepted_by_user_id)
+        if (
+            accepted_user is not None
+            and accepted_user.issuer == identity.issuer
+            and accepted_user.subject == identity.subject
+        ):
+            return {
+                "tenant_id": item.tenant_id,
+                "membership_id": await session.scalar(
+                    select(Membership.id).where(
+                        Membership.tenant_id == item.tenant_id,
+                        Membership.user_id == accepted_user.id,
+                    )
+                ),
+                "status": "accepted",
+                "idempotent": True,
+            }
+        raise HTTPException(410, "Invitation is unavailable")
     item.attempt_count += 1
-    if item.status == "pending" and item.expires_at < datetime.now(UTC):
+    if item.status == "pending" and item.expires_at <= datetime.now(UTC):
         item.status = "expired"
         session.add(
             _audit(

@@ -117,6 +117,12 @@ three uploads in flight; the backend retains its 20 MiB per-file bound. Per-file
 validation, ingestion state, partial success, removal, and retry stay visible.
 
 Editing a pending invitation replaces its claims and rotates its single-use token.
+Email edits and explicit regeneration rotate the single-use token and atomically
+return a replacement link. Role/grant-only edits update the pending invitation in
+place, so a link already displayed to the administrator is not silently invalidated.
+Anonymous acceptance uses the encrypted BFF continuation described in
+`AUTHENTICATION.md`; ordinary members land on the workspace dashboard and cannot
+render cached administration content through refresh or Browser Back.
 Removal invalidates the token, hides it from the active view, redacts email PII to
 a tombstone, and preserves immutable audit history. Accepted identities are managed
 through Memberships.

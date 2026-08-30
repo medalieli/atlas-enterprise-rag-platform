@@ -1,0 +1,97 @@
+import { expect, test } from "@playwright/test";
+
+test("owner invites a distinct verified identity in a fresh browser context", async ({ browser, baseURL }) => {
+  test.skip(process.env.ATLAS_LIVE_OIDC !== "1", "requires the isolated local OIDC stack");
+  const owner = await browser.newContext();
+  const ownerPage = await owner.newPage();
+  await ownerPage.goto(`${baseURL}/api/auth/login?returnTo=%2Fadmin%2Finvitations`);
+  expect(new URL(ownerPage.url()).searchParams.get("code_challenge_method")).toBe("S256");
+  await ownerPage.getByRole("link", { name: "Owner" }).click();
+  await expect(ownerPage.getByRole("heading", { name: "Invitations" })).toBeVisible();
+  const ownerSession = (await owner.cookies()).find((cookie) => cookie.name === "__Host-rag_session");
+  expect(ownerSession).toMatchObject({ httpOnly: true, secure: true, sameSite: "Lax" });
+  expect(await ownerPage.evaluate(async () => (await fetch("/api/invitations/accept", { method: "POST" })).status)).toBe(403);
+  await ownerPage.getByLabel("Email").fill("invitee@atlas.example.test");
+  await ownerPage.getByRole("button", { name: "Create invitation" }).click();
+  const invitationLink = await ownerPage.getByLabel("One-time invitation link").inputValue();
+  expect(new URL(invitationLink).origin).toBe(new URL(baseURL!).origin);
+  expect(new URL(invitationLink).pathname).toBe("/invitations/accept");
+  expect(new URL(invitationLink).hash).toMatch(/^#token=./);
+  await ownerPage.getByRole("button", { name: "Edit" }).click();
+  await ownerPage.getByLabel("Initial collection").selectOption({ index: 1 });
+  await ownerPage.getByLabel("Collection role").selectOption("viewer");
+  await ownerPage.getByRole("button", { name: "Save changes" }).click();
+  await expect(ownerPage.getByText("The existing link remains valid.")).toBeVisible();
+  expect(await ownerPage.getByLabel("One-time invitation link").inputValue()).toBe(invitationLink);
+
+  await ownerPage.waitForTimeout(26_000);
+  const wrong = await browser.newContext();
+  const wrongPage = await wrong.newPage();
+  await wrongPage.goto(`${baseURL}/api/auth/login?returnTo=%2Fdashboard`);
+  await wrongPage.getByRole("link", { name: "Admin" }).click();
+  await wrongPage.goto(invitationLink);
+  await expect(wrongPage.getByRole("button", { name: "Accept invitation" })).toBeVisible();
+  await wrongPage.getByRole("button", { name: "Accept invitation" }).click();
+  await expect(wrongPage.getByText(/cannot accept this invitation/i)).toBeVisible();
+
+  await wrongPage.waitForTimeout(26_000);
+  const invitee = await browser.newContext();
+  const inviteePage = await invitee.newPage();
+  await inviteePage.goto(invitationLink);
+  await expect(inviteePage.getByRole("link", { name: "Sign in to accept invitation" })).toBeVisible();
+  await expect(inviteePage).toHaveURL(`${baseURL}/invitations/accept`);
+  await inviteePage.getByRole("link", { name: "Sign in to accept invitation" }).click();
+  await inviteePage.getByRole("link", { name: "Invitee" }).click();
+  await expect(inviteePage.getByRole("button", { name: "Accept invitation" })).toBeVisible();
+  const inviteeSession = (await invitee.cookies()).find((cookie) => cookie.name === "__Host-rag_session");
+  expect(inviteeSession).toMatchObject({ httpOnly: true, secure: true, sameSite: "Lax" });
+  expect(await inviteePage.evaluate(() => ({ local: Object.values(localStorage), session: Object.values(sessionStorage) }))).toEqual({ local: [], session: [] });
+  await inviteePage.getByRole("button", { name: "Accept invitation" }).click();
+  await expect(inviteePage.getByText("Invitation accepted.")).toBeVisible();
+  await inviteePage.getByRole("link", { name: "Open Atlas" }).click();
+  await expect(inviteePage).toHaveURL(/\/dashboard$/);
+  await expect(inviteePage.getByRole("heading", { name: "Policies" })).toBeVisible();
+  await inviteePage.reload();
+  await expect(inviteePage).toHaveURL(/\/dashboard$/);
+  await expect(inviteePage.getByRole("heading", { name: "Policies" })).toBeVisible();
+  await inviteePage.goto(`${baseURL}/admin/members`);
+  await expect(inviteePage).toHaveURL(/\/dashboard$/);
+  await expect(inviteePage.getByRole("heading", { name: "Organization members" })).toHaveCount(0);
+  await expect(inviteePage.getByText(/session ended/i)).toHaveCount(0);
+  await inviteePage.goBack();
+  await expect(inviteePage).toHaveURL(/\/dashboard$/);
+  await expect(inviteePage.getByRole("heading", { name: "Organization members" })).toHaveCount(0);
+  await expect(inviteePage.getByText(/session ended/i)).toHaveCount(0);
+  await inviteePage.goForward();
+  await expect(inviteePage).toHaveURL(/\/dashboard$/);
+  await expect(inviteePage.getByRole("heading", { name: "Organization members" })).toHaveCount(0);
+  await expect(inviteePage.getByText(/session ended/i)).toHaveCount(0);
+
+  await inviteePage.goto(invitationLink);
+  await expect(inviteePage.getByRole("button", { name: "Accept invitation" })).toBeVisible();
+  await inviteePage.getByRole("button", { name: "Accept invitation" }).click();
+  await expect(inviteePage.getByText("Invitation accepted.")).toBeVisible();
+
+  await ownerPage.getByLabel("Email").fill("invitee@atlas.example.test");
+  await ownerPage.getByRole("button", { name: "Create invitation" }).click();
+  await expect(ownerPage.getByLabel("One-time invitation link")).not.toHaveValue(invitationLink);
+  const secondInvitationLink = await ownerPage.getByLabel("One-time invitation link").inputValue();
+  expect(secondInvitationLink).not.toBe(invitationLink);
+  await inviteePage.goto(`${baseURL}/dashboard`);
+  await inviteePage.goto(secondInvitationLink);
+  await expect(inviteePage.getByRole("button", { name: "Accept invitation" })).toBeVisible();
+  await inviteePage.getByRole("button", { name: "Accept invitation" }).click();
+  await expect(inviteePage.getByText("Invitation accepted.")).toBeVisible();
+
+  await inviteePage.getByRole("link", { name: "Open Atlas" }).click();
+  await expect(inviteePage).toHaveURL(/\/dashboard$/);
+  await inviteePage.getByRole("button", { name: "Log out" }).click();
+  await expect(inviteePage).toHaveURL(/\/login/);
+  await inviteePage.goBack();
+  await expect(inviteePage).toHaveURL(/\/login\?returnTo=/);
+  await expect(inviteePage.getByRole("heading", { name: "Organization members" })).toHaveCount(0);
+
+  await invitee.close();
+  await wrong.close();
+  await owner.close();
+});

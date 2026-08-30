@@ -188,7 +188,9 @@ Atlas provides OIDC-only login, a responsive enterprise workspace, bounded
 multi-document upload, existing Milestone 12 lifecycle controls, invitation
 editing/removal, and filtered CSV audit export. See the
 [enterprise finishing-pass guide](docs/POST_V1_ENTERPRISE_UPGRADE.md) for role and
-limit details. Atlas still stores no passwords and ships no default credentials.
+limit details. Invitation links now preserve a short-lived encrypted continuation
+through OIDC login and require the matching verified provider identity. Atlas still
+stores no passwords and ships no default credentials.
 
 If Docker commands are unavailable or report that the daemon is not running, install/start Docker Desktop and verify with `docker --version` and `docker compose version`.
 

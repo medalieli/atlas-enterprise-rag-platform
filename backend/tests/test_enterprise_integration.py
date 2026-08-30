@@ -36,6 +36,10 @@ pytestmark = [
 ]
 
 
+def invitation_token(link: str) -> str:
+    return parse_qs(urlparse(link).fragment)["token"][0]
+
+
 async def test_invitation_hash_acceptance_grant_revocation_and_audit_immutability() -> (
     None
 ):
@@ -76,9 +80,7 @@ async def test_invitation_hash_acceptance_grant_revocation_and_audit_immutabilit
                 },
             )
             assert created.status_code == 201, created.text
-            token = parse_qs(urlparse(created.json()["invitation_link"]).query)[
-                "token"
-            ][0]
+            token = invitation_token(created.json()["invitation_link"])
             async with session_factory() as session:
                 invitation = await session.scalar(
                     select(Invitation).where(Invitation.id == created.json()["id"])
@@ -86,10 +88,57 @@ async def test_invitation_hash_acceptance_grant_revocation_and_audit_immutabilit
                 assert invitation is not None
                 assert invitation.token_hash == sha256(token.encode()).hexdigest()
                 assert token not in invitation.token_hash
+            unchanged = await client.patch(
+                f"/organizations/{tenant_id}/invitations/{created.json()['id']}",
+                json={
+                    "email": " VIEWER@EXAMPLE.TEST ",
+                    "role": "member",
+                    "grants": [{"collection_id": str(collection_id), "role": "viewer"}],
+                },
+            )
+            assert unchanged.status_code == 200
+            assert unchanged.json()["token_rotated"] is False
+            assert unchanged.json()["invitation_link"] is None
+            app.dependency_overrides[verify_external_identity] = (
+                lambda: ExternalIdentity(
+                    issuer, "wrong-subject", "wrong@example.test", True
+                )
+            )
+            wrong_identity = await client.post(
+                "/invitations/accept", json={"token": token}
+            )
+            assert wrong_identity.status_code == 403
+            app.dependency_overrides[verify_external_identity] = (
+                lambda: ExternalIdentity(
+                    issuer, "viewer-sub", "viewer@example.test", False
+                )
+            )
+            unverified = await client.post(
+                "/invitations/accept", json={"token": token}
+            )
+            assert unverified.status_code == 403
+            app.dependency_overrides[verify_external_identity] = (
+                lambda: ExternalIdentity(
+                    "https://other-issuer.test",
+                    "viewer-sub",
+                    "viewer@example.test",
+                    True,
+                )
+            )
+            wrong_issuer = await client.post(
+                "/invitations/accept", json={"token": token}
+            )
+            assert wrong_issuer.status_code == 403
+            app.dependency_overrides[verify_external_identity] = (
+                lambda: ExternalIdentity(
+                    issuer, "viewer-sub", "viewer@example.test", True
+                )
+            )
             accepted = await client.post("/invitations/accept", json={"token": token})
             replay = await client.post("/invitations/accept", json={"token": token})
             assert accepted.status_code == 200
-            assert replay.status_code == 410
+            assert replay.status_code == 200
+            assert replay.json()["idempotent"] is True
         async with session_factory() as session:
             invited = await session.scalar(
                 select(User).where(User.issuer == issuer, User.subject == "viewer-sub")
@@ -163,9 +212,7 @@ async def test_invitation_edit_removal_and_filtered_csv_export() -> None:
                 f"/organizations/{tenant_id}/invitations",
                 json={"email": "old@example.test", "role": "member", "grants": []},
             )
-            old_token = parse_qs(urlparse(created.json()["invitation_link"]).query)[
-                "token"
-            ][0]
+            old_token = invitation_token(created.json()["invitation_link"])
             edited = await client.patch(
                 f"/organizations/{tenant_id}/invitations/{created.json()['id']}",
                 json={
@@ -175,10 +222,17 @@ async def test_invitation_edit_removal_and_filtered_csv_export() -> None:
                 },
             )
             assert edited.status_code == 200, edited.text
+            current_token = invitation_token(edited.json()["invitation_link"])
             assert (
                 await client.post("/invitations/accept", json={"token": old_token})
             ).status_code == 410
             replacement_id = edited.json()["id"]
+            async with session_factory() as session:
+                replacement = await session.get(Invitation, replacement_id)
+                assert replacement is not None
+                assert replacement.token_hash == sha256(
+                    current_token.encode()
+                ).hexdigest()
             removed = await client.post(
                 f"/organizations/{tenant_id}/invitations/{replacement_id}/remove"
             )

@@ -3,9 +3,9 @@ import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
 
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ returnTo?: string; error?: string }> }) {
-  if (await getSession()) redirect("/dashboard" as "/chat");
   const params = await searchParams;
   const requested = params.returnTo?.startsWith("/") && !params.returnTo.startsWith("//") ? params.returnTo : "/dashboard";
+  if (await getSession()) redirect(requested as "/chat");
   return <main className="login" id="main-content"><section className="login-card" aria-labelledby="login-title">
     <div className="brand-lockup"><span className="brand-mark">A</span><span>Atlas Knowledge</span></div>
     <p className="eyebrow">ENTERPRISE KNOWLEDGE WORKSPACE</p>
