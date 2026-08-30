@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   api,
   ApiError,
+  changeDemoRole,
   key,
   logout as endSession,
   type Citation,
@@ -55,6 +56,7 @@ export function Workspace({
   const [loading, setLoading] = useState(true);
   const [mobile, setMobile] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [roleChanging, setRoleChanging] = useState(false);
   const membership =
     identity?.memberships.find(
       (x) =>
@@ -101,6 +103,18 @@ export function Workspace({
     } finally {
       router.push("/login" as "/");
       router.refresh();
+    }
+  }
+  async function selectDemoRole(role: "owner" | "admin" | "editor" | "viewer") {
+    if (!membership || roleChanging) return;
+    setRoleChanging(true);
+    setError("");
+    try {
+      await changeDemoRole(membership.tenant_id, role);
+      window.location.reload();
+    } catch (e) {
+      setError(errorText(e));
+      setRoleChanging(false);
     }
   }
   if (loading)
@@ -166,6 +180,27 @@ export function Workspace({
         {!collections.length && (
           <div className="sidebar-empty">No collections yet.</div>
         )}
+        {identity?.demo_role_preview_enabled && membership?.real_role === "owner" && (
+          <div className="demo-role-control">
+            <label htmlFor="demo-role">Demo role</label>
+            <select
+              id="demo-role"
+              value={identity.effective_demo_role ?? "owner"}
+              disabled={roleChanging}
+              onChange={(event) => void selectDemoRole(event.target.value as "owner" | "admin" | "editor" | "viewer")}
+            >
+              <option value="owner">Owner</option>
+              <option value="admin">Admin</option>
+              <option value="editor">Editor</option>
+              <option value="viewer">Viewer</option>
+            </select>
+            {(identity.effective_demo_role ?? "owner") !== "owner" && (
+              <button type="button" onClick={() => void selectDemoRole("owner")} disabled={roleChanging}>
+                Return to Owner
+              </button>
+            )}
+          </div>
+        )}
         <nav>
           <Link className={initialView === "dashboard" ? "active" : ""} href={"/dashboard" as "/chat"}>Overview</Link>
           <Link className={initialView === "chat" ? "active" : ""} href="/chat">
@@ -179,18 +214,8 @@ export function Workspace({
           </Link>
           {membership && ["owner", "admin"].includes(membership.role) && (
             <>
-              <a
-                className={initialView === "members" ? "active" : ""}
-                href="/admin/members"
-              >
-                Members
-              </a>
-              <a
-                className={initialView === "invitations" ? "active" : ""}
-                href="/admin/invitations"
-              >
-                Invitations
-              </a>
+              {!identity?.demo_role_preview_enabled && <a className={initialView === "members" ? "active" : ""} href="/admin/members">Members</a>}
+              {!identity?.demo_role_preview_enabled && <a className={initialView === "invitations" ? "active" : ""} href="/admin/invitations">Invitations</a>}
               <a
                 className={initialView === "audit" ? "active" : ""}
                 href="/admin/audit"
@@ -217,7 +242,14 @@ export function Workspace({
           </button>
         </div>
       </aside>
-      <main className="workspace" id="main-content">
+      <main className={`workspace ${initialView === "chat" ? "chat-workspace" : ""}`} id="main-content">
+        {identity?.effective_demo_role && identity.effective_demo_role !== "owner" && (
+          <div className="demo-role-banner" role="status">
+            <strong>Demo role: {identity.effective_demo_role[0].toUpperCase() + identity.effective_demo_role.slice(1)}</strong>
+            <span>Real owner identity retained; backend permissions reflect this preview.</span>
+            <button type="button" onClick={() => void selectDemoRole("owner")} disabled={roleChanging}>Return to Owner</button>
+          </div>
+        )}
         {error && (
           <div className="alert error" role="alert">
             {error}
@@ -784,6 +816,23 @@ function Chat({ collectionId }: { collectionId: string }) {
   const [error, setError] = useState("");
   const [citation, setCitation] = useState<Citation>();
   const answerRef = useRef<HTMLDivElement>(null);
+  const messagesRef = useRef<HTMLDivElement>(null);
+  const nearBottomRef = useRef(true);
+  const [showScrollLatest, setShowScrollLatest] = useState(false);
+  function scrollToLatest(behavior: ScrollBehavior = "smooth") {
+    const element = messagesRef.current;
+    if (!element) return;
+    nearBottomRef.current = true;
+    setShowScrollLatest(false);
+    element.scrollTo({ top: element.scrollHeight, behavior });
+  }
+  function trackMessageScroll() {
+    const element = messagesRef.current;
+    if (!element) return;
+    const nearBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 120;
+    nearBottomRef.current = nearBottom;
+    setShowScrollLatest(!nearBottom);
+  }
   async function loadConversations() {
     try {
       const data = await api<{ conversations: Conversation[] }>(
@@ -804,6 +853,8 @@ function Chat({ collectionId }: { collectionId: string }) {
     void loadConversations();
   }, [collectionId]);
   useEffect(() => {
+    nearBottomRef.current = true;
+    setShowScrollLatest(false);
     if (!current) {
       setMessages([]);
       return;
@@ -815,6 +866,13 @@ function Chat({ collectionId }: { collectionId: string }) {
       .then((x) => setMessages(x.messages))
       .catch((e) => setError(errorText(e)));
   }, [current, collectionId]);
+  useEffect(() => {
+    if (nearBottomRef.current) {
+      requestAnimationFrame(() => scrollToLatest("auto"));
+    } else if (messages.length || pending) {
+      setShowScrollLatest(true);
+    }
+  }, [messages, pending]);
   async function create() {
     try {
       const c = await api<Conversation>(
@@ -921,7 +979,7 @@ function Chat({ collectionId }: { collectionId: string }) {
             ＋ New chat
           </button>
         </header>
-        <div className="messages" aria-live="polite">
+        <div className="messages" aria-live="polite" ref={messagesRef} onScroll={trackMessageScroll}>
           {!current ? (
             <div className="empty">
               <div className="empty-icon">✦</div>
@@ -1008,6 +1066,11 @@ function Chat({ collectionId }: { collectionId: string }) {
             </div>
           )}
         </div>
+        {showScrollLatest && (
+          <button className="scroll-to-latest" type="button" onClick={() => scrollToLatest()}>
+            Scroll to latest
+          </button>
+        )}
         <form className="composer" onSubmit={send}>
           <label className="sr-only" htmlFor="question">
             Ask a question

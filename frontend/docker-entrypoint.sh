@@ -11,6 +11,7 @@ for name in SESSION_SECRET OIDC_CLIENT_SECRET; do
 done
 case "${APP_ENV:-}" in
   production)
+    [ "${DEMO_ROLE_PREVIEW_ENABLED:-false}" != "true" ] || { echo 'Demo role preview is forbidden in production' >&2; exit 78; }
     [ "${APP_BASE_URL#https://}" != "$APP_BASE_URL" ] || { echo 'APP_BASE_URL must use HTTPS' >&2; exit 78; }
     [ ${#SESSION_SECRET} -ge 32 ] || { echo 'SESSION_SECRET must be at least 32 characters' >&2; exit 78; }
     [ -n "${OIDC_CLIENT_ID:-}" ] && [ -n "${OIDC_AUTHORIZATION_URL:-}" ] && [ -n "${OIDC_TOKEN_URL:-}" ] || { echo 'Production OIDC configuration is incomplete' >&2; exit 78; }

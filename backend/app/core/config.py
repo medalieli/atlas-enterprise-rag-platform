@@ -78,6 +78,8 @@ class Settings(BaseSettings):
     auth_jwks_cache_seconds: int = Field(default=300, ge=30, le=86_400)
     auth_jwks_max_bytes: int = Field(default=65_536, ge=1_024, le=1_048_576)
     auth_allow_insecure_http: bool = False
+    demo_role_preview_enabled: bool = False
+    demo_role_preview_secret: SecretStr | None = None
     invitation_expiration_hours: int = Field(default=72, ge=1, le=168)
     audit_export_max_days: int = Field(default=366, ge=1, le=3660)
     audit_export_max_rows: int = Field(default=10_000, ge=1, le=100_000)
@@ -165,6 +167,18 @@ class Settings(BaseSettings):
             raise ValueError(
                 "Authentication cannot be disabled outside development/test"
             )
+        if self.demo_role_preview_enabled:
+            if self.app_env not in {"development", "test"}:
+                raise ValueError(
+                    "Demo role preview is forbidden outside development/test"
+                )
+            preview_secret = (
+                self.demo_role_preview_secret.get_secret_value()
+                if self.demo_role_preview_secret
+                else ""
+            )
+            if len(preview_secret) < 32:
+                raise ValueError("Demo role preview requires a 32+ character secret")
         if self.app_env == "production":
             weak_markers = {"", "password", "changeme", "change-me", "secret"}
             password = self.postgres_password.get_secret_value().strip().lower()

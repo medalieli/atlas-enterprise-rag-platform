@@ -1,20 +1,29 @@
 import json
 import time
+from uuid import uuid4
 
 import httpx
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
+from fastapi import HTTPException
 from jwt import PyJWK
 
 from app.auth import (
+    DEMO_ROLE_PERMISSIONS,
     AccessTokenVerifier,
     AuthenticationFailure,
+    CollectionPermission,
+    DemoRole,
     JWKSCache,
     Permission,
+    demo_role_context,
     has_permission,
+    issue_demo_preview,
+    require_collection_permission,
+    verify_demo_preview,
 )
-from app.core.config import Settings
+from app.core.config import Settings, get_settings
 from app.db.models import CollectionRole, MembershipRole
 from app.main import app
 
@@ -42,6 +51,109 @@ def auth_settings(**updates: object) -> Settings:
         auth_jwks_url=f"{ISSUER}/jwks",
         **updates,
     )
+
+
+@pytest.mark.parametrize(
+    ("role", "allowed", "denied"),
+    [
+        (DemoRole.OWNER, Permission.MANAGE_MEMBERS, None),
+        (DemoRole.ADMIN, Permission.VIEW_ANALYTICS, None),
+        (DemoRole.EDITOR, Permission.UPLOAD, Permission.MANAGE_COLLECTIONS),
+        (DemoRole.VIEWER, Permission.READ, Permission.UPLOAD),
+    ],
+)
+def test_demo_roles_use_real_permission_sets(
+    role: DemoRole, allowed: Permission, denied: Permission | None
+) -> None:
+    assert allowed in DEMO_ROLE_PERMISSIONS[role]
+    if denied is not None:
+        assert denied not in DEMO_ROLE_PERMISSIONS[role]
+
+
+def test_demo_preview_is_signed_and_bound_to_real_owner(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DEMO_ROLE_PREVIEW_ENABLED", "true")
+    monkeypatch.setenv(
+        "DEMO_ROLE_PREVIEW_SECRET", "preview-test-secret-that-is-long-enough"
+    )
+    get_settings.cache_clear()
+    owner_id, other_id, tenant_id = uuid4(), uuid4(), uuid4()
+    try:
+        token = issue_demo_preview(owner_id, tenant_id, DemoRole.VIEWER)
+        assert verify_demo_preview(token, owner_id) == (tenant_id, DemoRole.VIEWER)
+        with pytest.raises(HTTPException) as mismatch:
+            verify_demo_preview(token, other_id)
+        assert getattr(mismatch.value, "status_code", None) == 403
+        header, payload, signature = token.split(".")
+        forged_signature = f"{'a' if signature[0] != 'a' else 'b'}{signature[1:]}"
+        forged = ".".join((header, payload, forged_signature))
+        with pytest.raises(HTTPException) as invalid:
+            verify_demo_preview(forged, owner_id)
+        assert getattr(invalid.value, "status_code", None) == 403
+    finally:
+        get_settings.cache_clear()
+
+
+class PreviewResult:
+    def __init__(self, row: tuple) -> None:
+        self.row = row
+
+    def one_or_none(self) -> tuple:
+        return self.row
+
+
+class PreviewSession:
+    def __init__(self, row: tuple) -> None:
+        self.row = row
+        self.events: list[object] = []
+        self.commits = 0
+
+    async def execute(self, _statement: object) -> PreviewResult:
+        return PreviewResult(self.row)
+
+    def add(self, event: object) -> None:
+        self.events.append(event)
+
+    async def commit(self) -> None:
+        self.commits += 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("role", "allowed", "denied"),
+    [
+        (DemoRole.OWNER, CollectionPermission.DELETE, None),
+        (DemoRole.ADMIN, CollectionPermission.MANAGE_GRANTS, None),
+        (DemoRole.EDITOR, CollectionPermission.REINDEX, CollectionPermission.DELETE),
+        (DemoRole.VIEWER, CollectionPermission.READ, CollectionPermission.UPLOAD),
+    ],
+)
+async def test_demo_collection_permissions_are_enforced(
+    role: DemoRole,
+    allowed: CollectionPermission,
+    denied: CollectionPermission | None,
+) -> None:
+    tenant_id, owner_id, collection_id = uuid4(), uuid4(), uuid4()
+    session = PreviewSession((tenant_id, MembershipRole.OWNER, None))
+    context_token = demo_role_context.set((tenant_id, role))
+    try:
+        result = await require_collection_permission(  # type: ignore[arg-type]
+            session, owner_id, collection_id, allowed
+        )
+        assert result[0] == tenant_id
+        if denied is not None:
+            with pytest.raises(HTTPException) as forbidden:
+                await require_collection_permission(  # type: ignore[arg-type]
+                    session, owner_id, collection_id, denied
+                )
+            assert forbidden.value.status_code == 403
+            assert session.commits == 1
+            assert session.events[-1].event_metadata == {
+                "reason_code": "demo_role_permission",
+                "effective_demo_role": role.value,
+            }
+    finally:
+        demo_role_context.reset(context_token)
 
 
 class StaticCache:

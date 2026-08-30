@@ -16,7 +16,7 @@ async function handler(request: NextRequest, context: { params: Promise<{ path: 
  return bffSpan(async () => {
   let session = await getSession();
   if (!session) return NextResponse.json({ detail: "Session expired" }, { status: 401 });
-  if (session.expiresAt < Date.now() + 30000 && session.refreshToken) { session = await refresh(session.refreshToken); if (session) await setSession(session); }
+  if (session.expiresAt < Date.now() + 30000 && session.refreshToken) { const refreshed = await refresh(session.refreshToken); session = refreshed ? { ...refreshed, demoPreviewToken: session.demoPreviewToken, effectiveDemoRole: session.effectiveDemoRole } : null; if (session) await setSession(session); }
   if (!session) { await clearSession(); return NextResponse.json({ detail: "Session expired" }, { status: 401 }); }
   if (!["GET", "HEAD"].includes(request.method)) {
     const jar = await cookies();
@@ -27,6 +27,7 @@ async function handler(request: NextRequest, context: { params: Promise<{ path: 
   const upstream = new URL(path.join("/"), `${process.env.API_INTERNAL_URL || "http://api:8000"}/`);
   upstream.search = request.nextUrl.search;
   const headers = new Headers(); headers.set("authorization", `Bearer ${session.accessToken}`); headers.set("accept", request.headers.get("accept") || "application/json");
+  if (session.demoPreviewToken) headers.set("x-demo-role-preview", session.demoPreviewToken);
   injectTrace(headers);
   const contentType = request.headers.get("content-type"); if (contentType) headers.set("content-type", contentType);
   const idempotency = request.headers.get("idempotency-key"); if (idempotency) headers.set("idempotency-key", idempotency);

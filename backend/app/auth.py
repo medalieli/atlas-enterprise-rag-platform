@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import time
+from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import StrEnum
 from functools import lru_cache
@@ -11,7 +12,7 @@ from uuid import UUID
 
 import httpx
 import jwt
-from fastapi import Depends, HTTPException, Security, status
+from fastapi import Depends, Header, HTTPException, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt import PyJWK
 from sqlalchemy import select
@@ -49,6 +50,13 @@ class Permission(StrEnum):
     VIEW_ANALYTICS = "analytics:read"
 
 
+class DemoRole(StrEnum):
+    OWNER = "owner"
+    ADMIN = "admin"
+    EDITOR = "editor"
+    VIEWER = "viewer"
+
+
 ROLE_PERMISSIONS: dict[MembershipRole, frozenset[Permission]] = {
     MembershipRole.MEMBER: frozenset({Permission.READ}),
     MembershipRole.ADMIN: frozenset(
@@ -64,6 +72,15 @@ ROLE_PERMISSIONS: dict[MembershipRole, frozenset[Permission]] = {
         }
     ),
     MembershipRole.OWNER: frozenset(set(Permission)),
+}
+
+DEMO_ROLE_PERMISSIONS: dict[DemoRole, frozenset[Permission]] = {
+    DemoRole.OWNER: frozenset(set(Permission)),
+    DemoRole.ADMIN: ROLE_PERMISSIONS[MembershipRole.ADMIN],
+    DemoRole.EDITOR: frozenset(
+        {Permission.READ, Permission.UPLOAD, Permission.REINDEX}
+    ),
+    DemoRole.VIEWER: frozenset({Permission.READ}),
 }
 
 
@@ -93,6 +110,65 @@ class TrustedPrincipal:
     # tenant_id is retained only for explicit test/development dependency overrides.
     tenant_id: UUID | None
     user_id: UUID
+    demo_role: DemoRole | None = None
+    demo_tenant_id: UUID | None = None
+
+
+demo_role_context: ContextVar[tuple[UUID, DemoRole] | None] = ContextVar(
+    "demo_role_context", default=None
+)
+
+
+def demo_audit_metadata() -> dict[str, str]:
+    preview = demo_role_context.get()
+    return {"effective_demo_role": preview[1].value} if preview else {}
+
+
+def effective_demo_role(tenant_id: UUID) -> DemoRole | None:
+    preview = demo_role_context.get()
+    return preview[1] if preview and preview[0] == tenant_id else None
+
+
+def issue_demo_preview(user_id: UUID, tenant_id: UUID, role: DemoRole) -> str:
+    settings = get_settings()
+    secret = settings.demo_role_preview_secret
+    if not settings.demo_role_preview_enabled or secret is None:
+        raise HTTPException(status_code=404, detail="Demo role preview is unavailable")
+    now = int(time.time())
+    return jwt.encode(
+        {
+            "iss": "atlas-demo-role-preview",
+            "sub": str(user_id),
+            "tenant_id": str(tenant_id),
+            "role": role.value,
+            "iat": now,
+            "exp": now + 8 * 60 * 60,
+        },
+        secret.get_secret_value(),
+        algorithm="HS256",
+    )
+
+
+def verify_demo_preview(token: str, user_id: UUID) -> tuple[UUID, DemoRole]:
+    settings = get_settings()
+    secret = settings.demo_role_preview_secret
+    if not settings.demo_role_preview_enabled or secret is None:
+        raise HTTPException(status_code=403, detail="Demo role preview is unavailable")
+    try:
+        claims = jwt.decode(
+            token,
+            secret.get_secret_value(),
+            algorithms=["HS256"],
+            issuer="atlas-demo-role-preview",
+            options={"require": ["iss", "sub", "tenant_id", "role", "iat", "exp"]},
+        )
+        if claims["sub"] != str(user_id):
+            raise ValueError("subject mismatch")
+        return UUID(claims["tenant_id"]), DemoRole(claims["role"])
+    except (jwt.PyJWTError, KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=403, detail="Invalid demo role preview"
+        ) from exc
 
 
 @dataclass(frozen=True)
@@ -284,7 +360,9 @@ async def get_trusted_principal(
         HTTPAuthorizationCredentials | None, Security(bearer_scheme)
     ],
     session: Annotated[AsyncSession, Depends(get_session)],
+    demo_preview: Annotated[str | None, Header(alias="x-demo-role-preview")] = None,
 ) -> TrustedPrincipal:
+    demo_role_context.set(None)
     settings = get_settings()
     if not settings.auth_enabled:
         if (
@@ -312,6 +390,28 @@ async def get_trusted_principal(
     )
     if user is None:
         raise authentication_error()
+    if demo_preview:
+        tenant_id, role = verify_demo_preview(demo_preview, user.id)
+        owner = await session.scalar(
+            select(Membership.id).where(
+                Membership.user_id == user.id,
+                Membership.tenant_id == tenant_id,
+                Membership.role == MembershipRole.OWNER,
+                Membership.enabled.is_(True),
+                Membership.status == "active",
+            )
+        )
+        if owner is None:
+            raise HTTPException(
+                status_code=403, detail="Demo role preview requires owner"
+            )
+        demo_role_context.set((tenant_id, role))
+        return TrustedPrincipal(
+            tenant_id=None,
+            user_id=user.id,
+            demo_role=role,
+            demo_tenant_id=tenant_id,
+        )
     return TrustedPrincipal(tenant_id=None, user_id=user.id)
 
 
@@ -358,7 +458,13 @@ async def require_membership(
             Membership.status == "active",
         )
     )
-    if membership is None or not has_permission(membership.role, permission):
+    preview_role = effective_demo_role(tenant_id)
+    permitted = (
+        permission in DEMO_ROLE_PERMISSIONS[preview_role]
+        if preview_role
+        else membership is not None and has_permission(membership.role, permission)
+    )
+    if membership is None or not permitted:
         raise HTTPException(status_code=403, detail="Permission denied")
     return membership
 
@@ -393,6 +499,42 @@ async def require_collection_permission(
     if row is None:
         raise HTTPException(status_code=404, detail="Collection not found")
     tenant_id, organization_role, collection_role = row
+    preview_role = effective_demo_role(tenant_id)
+    if preview_role:
+        preview_collection_role = {
+            DemoRole.OWNER: CollectionRole.MANAGER,
+            DemoRole.ADMIN: CollectionRole.MANAGER,
+            DemoRole.EDITOR: CollectionRole.EDITOR,
+            DemoRole.VIEWER: CollectionRole.VIEWER,
+        }[preview_role]
+        if permission not in COLLECTION_ROLE_PERMISSIONS[preview_collection_role]:
+            session.add(
+                AuditEvent(
+                    tenant_id=tenant_id,
+                    actor_user_id=user_id,
+                    actor_role=organization_role.value,
+                    action="authorization.denied",
+                    target_type="collection",
+                    target_id=collection_id,
+                    outcome="denied",
+                    request_id=request_id_var.get(),
+                    event_metadata={
+                        "reason_code": "demo_role_permission",
+                        "effective_demo_role": preview_role.value,
+                    },
+                )
+            )
+            await session.commit()
+            raise HTTPException(status_code=403, detail="Permission denied")
+        return (
+            tenant_id,
+            MembershipRole.OWNER
+            if preview_role == DemoRole.OWNER
+            else MembershipRole.ADMIN
+            if preview_role == DemoRole.ADMIN
+            else MembershipRole.MEMBER,
+            preview_collection_role,
+        )
     if organization_role in {MembershipRole.OWNER, MembershipRole.ADMIN}:
         return tenant_id, organization_role, collection_role
     if (
@@ -409,7 +551,10 @@ async def require_collection_permission(
                 target_id=collection_id,
                 outcome="denied",
                 request_id=request_id_var.get(),
-                event_metadata={"reason_code": "collection_permission"},
+                event_metadata={
+                    "reason_code": "collection_permission",
+                    **demo_audit_metadata(),
+                },
             )
         )
         await session.commit()

@@ -8,12 +8,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.enterprise import business_audit_event
 from app.auth import (
+    DEMO_ROLE_PERMISSIONS,
     ROLE_PERMISSIONS,
+    DemoRole,
     Permission,
     TrustedPrincipal,
     get_trusted_principal,
     require_membership,
 )
+from app.core.config import get_settings
 from app.db.models import Collection, CollectionGrant, Membership, MembershipRole
 from app.db.session import get_session
 
@@ -26,11 +29,14 @@ class MembershipResponse(BaseModel):
     permissions: list[str]
     status: str
     version: int
+    real_role: str
 
 
 class IdentityResponse(BaseModel):
     principal_id: UUID
     memberships: list[MembershipResponse]
+    demo_role_preview_enabled: bool
+    effective_demo_role: DemoRole | None
 
 
 class CollectionCreate(BaseModel):
@@ -66,15 +72,29 @@ async def me(
     ).all()
     return IdentityResponse(
         principal_id=principal.user_id,
+        demo_role_preview_enabled=get_settings().demo_role_preview_enabled,
+        effective_demo_role=principal.demo_role,
         memberships=[
             MembershipResponse(
                 tenant_id=item.tenant_id,
-                role=item.role.value,
+                role=(
+                    principal.demo_role.value
+                    if principal.demo_tenant_id == item.tenant_id
+                    and principal.demo_role is not None
+                    else item.role.value
+                ),
                 permissions=sorted(
-                    permission.value for permission in ROLE_PERMISSIONS[item.role]
+                    permission.value
+                    for permission in (
+                        DEMO_ROLE_PERMISSIONS[principal.demo_role]
+                        if principal.demo_tenant_id == item.tenant_id
+                        and principal.demo_role is not None
+                        else ROLE_PERMISSIONS[item.role]
+                    )
                 ),
                 status=item.status,
                 version=item.version,
+                real_role=item.role.value,
             )
             for item in memberships
         ],
@@ -91,7 +111,10 @@ async def list_collections(
         session, principal.user_id, tenant_id, Permission.READ
     )
     query = select(Collection).where(Collection.tenant_id == tenant_id)
-    if membership.role == MembershipRole.MEMBER:
+    preview_role = (
+        principal.demo_role if principal.demo_tenant_id == tenant_id else None
+    )
+    if membership.role == MembershipRole.MEMBER and preview_role is None:
         query = query.join(
             CollectionGrant,
             (CollectionGrant.collection_id == Collection.id)
@@ -114,7 +137,14 @@ async def list_collections(
             name=item.name,
             description=item.description,
             access_role=(
-                "manager"
+                {
+                    DemoRole.OWNER: "manager",
+                    DemoRole.ADMIN: "manager",
+                    DemoRole.EDITOR: "editor",
+                    DemoRole.VIEWER: "viewer",
+                }[preview_role]
+                if preview_role
+                else "manager"
                 if membership.role in {MembershipRole.OWNER, MembershipRole.ADMIN}
                 else grant_roles[item.id].value
             ),

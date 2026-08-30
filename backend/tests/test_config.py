@@ -1,3 +1,6 @@
+import pytest
+from pydantic import ValidationError
+
 from app.core.config import Settings
 
 
@@ -28,3 +31,31 @@ def test_empty_optional_secret_is_unset(monkeypatch) -> None:  # type: ignore[no
     settings = Settings(_env_file=None)
 
     assert settings.openai_api_key is None
+
+
+def test_demo_role_preview_is_disabled_by_default() -> None:
+    assert Settings(_env_file=None).demo_role_preview_enabled is False
+
+
+def test_demo_role_preview_requires_non_production_secret() -> None:
+    with pytest.raises(ValidationError):
+        Settings(
+            _env_file=None,
+            app_env="production",
+            demo_role_preview_enabled=True,
+            demo_role_preview_secret="x" * 32,
+        )
+    with pytest.raises(ValidationError):
+        Settings(
+            _env_file=None,
+            app_env="development",
+            demo_role_preview_enabled=True,
+            demo_role_preview_secret="short",
+        )
+    preview = Settings(
+        _env_file=None,
+        app_env="development",
+        demo_role_preview_enabled=True,
+        demo_role_preview_secret="x" * 32,
+    )
+    assert preview.demo_role_preview_enabled is True

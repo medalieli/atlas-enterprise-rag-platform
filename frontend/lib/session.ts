@@ -2,7 +2,13 @@ import { cookies } from "next/headers";
 import { EncryptJWT, jwtDecrypt } from "jose";
 import { isSecureRuntime } from "@/lib/runtime";
 
-export type Session = { accessToken: string; refreshToken?: string; expiresAt: number };
+export type Session = {
+  accessToken: string;
+  refreshToken?: string;
+  expiresAt: number;
+  demoPreviewToken?: string;
+  effectiveDemoRole?: "owner" | "admin" | "editor" | "viewer";
+};
 export type InvitationContinuation = { token: string };
 const secure = isSecureRuntime();
 const name = secure ? "__Host-rag_session" : "rag_session";

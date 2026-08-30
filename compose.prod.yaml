@@ -57,6 +57,7 @@ services:
       OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:?Set OIDC client ID}
       OIDC_CLIENT_SECRET: !reset null
       OIDC_CLIENT_SECRET_FILE: /run/secrets/oidc_client_secret
+      DEMO_ROLE_PREVIEW_ENABLED: "false"
     secrets: [session_secret, oidc_client_secret]
     tmpfs: ["/tmp:rw,noexec,nosuid,size=32m", "/app/.next/cache:rw,noexec,nosuid,size=32m"]
     # No ports are published, but the BFF needs outbound access to the OIDC
@@ -84,6 +85,7 @@ services:
       OPENAI_API_KEY: !reset null
       OPENAI_API_KEY_FILE: /run/secrets/openai_api_key
       AUTH_ENABLED: "true"
+      DEMO_ROLE_PREVIEW_ENABLED: "false"
       DEVELOPMENT_TENANT_ID: !reset null
       DEVELOPMENT_USER_ID: !reset null
       METRICS_BEARER_TOKEN: !reset null

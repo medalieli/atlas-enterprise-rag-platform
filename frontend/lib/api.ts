@@ -1,11 +1,17 @@
 export type Membership = {
   tenant_id: string;
-  role: "owner" | "admin" | "member";
+  role: "owner" | "admin" | "editor" | "viewer" | "member";
+  real_role: "owner" | "admin" | "member";
   permissions: string[];
   status: string;
   version: number;
 };
-export type Identity = { principal_id: string; memberships: Membership[] };
+export type Identity = {
+  principal_id: string;
+  memberships: Membership[];
+  demo_role_preview_enabled: boolean;
+  effective_demo_role: "owner" | "admin" | "editor" | "viewer" | null;
+};
 export type Collection = {
   id: string;
   tenant_id: string;
@@ -145,5 +151,15 @@ export async function logout(): Promise<void> {
   if (!response.ok)
     throw new ApiError(response.status, "Logout could not be completed.");
   csrf = null;
+}
+export async function changeDemoRole(tenantId: string, role: "owner" | "admin" | "editor" | "viewer") {
+  const response = await fetch("/api/demo-role", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-csrf-token": await csrfToken() },
+    body: JSON.stringify({ tenant_id: tenantId, role }),
+    cache: "no-store",
+  });
+  if (!response.ok) throw new ApiError(response.status, "Demo role could not be changed.");
+  return response.json() as Promise<{ effective_role: typeof role }>;
 }
 export const key = () => crypto.randomUUID();

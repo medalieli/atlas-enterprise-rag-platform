@@ -82,6 +82,23 @@ selected invitee profile, then choose **Invitee** in a completely new browser
 context. These immutable synthetic subjects are not production credentials, use no
 passwords, and are unavailable unless the test-only utility is started explicitly.
 
+## Development role preview
+
+`DEMO_ROLE_PREVIEW_ENABLED` defaults to `false` and is restricted to development
+and test environments. When enabled with a separate 32-character-or-longer
+`DEMO_ROLE_PREVIEW_SECRET`, a real organization owner can preview Owner, Admin,
+Editor, and Viewer authorization without creating synthetic accounts or signing in
+again. The browser submits only a requested enum and tenant identifier through the
+CSRF-protected BFF. The API verifies the real owner membership and returns a signed,
+owner-bound preview grant; the BFF stores that grant only inside the encrypted,
+HttpOnly session cookie. Backend authorization validates the grant on every request,
+and audit events keep the real actor while recording `effective_demo_role`.
+
+Production configuration validation rejects role preview. The production Compose
+override also pins it off. Members and Invitations remain fully implemented in the
+API and database, but their navigation and frontend routes are unavailable while
+the development demo is active.
+
 Permissions are centralized as `tenant:read`, `document:upload` and
 `collection:manage`. Unknown/missing resources and cross-tenant resources return the
 same `404`. Valid identities lacking a general role permission receive `403`.

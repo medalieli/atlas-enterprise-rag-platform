@@ -14,10 +14,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import (
     CollectionPermission,
+    DemoRole,
     ExternalIdentity,
     Permission,
     TrustedPrincipal,
+    demo_audit_metadata,
     get_trusted_principal,
+    issue_demo_preview,
     require_collection_permission,
     require_membership,
     verify_external_identity,
@@ -158,9 +161,18 @@ def _audit(
     safe = {
         k: v
         for k, v in (metadata or {}).items()
-        if k in {"reason_code", "new_role", "new_status", "collection_role"}
+        if k
+        in {
+            "reason_code",
+            "new_role",
+            "new_status",
+            "collection_role",
+            "effective_demo_role",
+        }
         and isinstance(v, str | bool | int)
     }
+    for key, value in demo_audit_metadata().items():
+        safe.setdefault(key, value)
     return AuditEvent(
         tenant_id=tenant_id,
         actor_user_id=actor,
@@ -184,6 +196,60 @@ def business_audit_event(
 ) -> AuditEvent:
     """Build a bounded event without accepting user or document content."""
     return _audit(tenant_id, actor, role, action, target_type, target_id)
+
+
+class DemoRolePreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tenant_id: UUID
+    role: DemoRole
+
+
+class DemoRolePreviewResponse(BaseModel):
+    effective_role: DemoRole
+    preview_token: str
+
+
+@router.post("/demo/role-preview", response_model=DemoRolePreviewResponse)
+async def change_demo_role(
+    request: DemoRolePreviewRequest,
+    principal: Annotated[TrustedPrincipal, Depends(get_trusted_principal)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> DemoRolePreviewResponse:
+    settings = get_settings()
+    if not settings.demo_role_preview_enabled:
+        raise HTTPException(404, "Demo role preview is unavailable")
+    owner = await session.scalar(
+        select(Membership).where(
+            Membership.user_id == principal.user_id,
+            Membership.tenant_id == request.tenant_id,
+            Membership.role == MembershipRole.OWNER,
+            Membership.enabled.is_(True),
+            Membership.status == "active",
+        )
+    )
+    if owner is None:
+        raise HTTPException(403, "Only an owner may change the demo role")
+    session.add(
+        _audit(
+            request.tenant_id,
+            principal.user_id,
+            MembershipRole.OWNER.value,
+            "demo.role.changed",
+            "membership",
+            owner.id,
+            metadata={
+                "new_role": request.role.value,
+                "effective_demo_role": request.role.value,
+            },
+        )
+    )
+    await session.commit()
+    return DemoRolePreviewResponse(
+        effective_role=request.role,
+        preview_token=issue_demo_preview(
+            principal.user_id, request.tenant_id, request.role
+        ),
+    )
 
 
 def _member(item: Membership, user: User) -> dict[str, object]:
