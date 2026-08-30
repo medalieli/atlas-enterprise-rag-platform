@@ -2,13 +2,12 @@ import { expect, test } from "@playwright/test";
 
 test("real OIDC owner previews backend-enforced roles", async ({ page, baseURL }) => {
   await page.goto(`${baseURL}/api/auth/login?returnTo=%2Fdashboard`);
-  await page.getByRole("link", { name: "Owner" }).click();
-  await expect(page.getByLabel("Demo role")).toBeVisible();
+  await expect(page.getByLabel("View workspace as")).toBeVisible();
 
   async function select(role: "owner" | "admin" | "editor" | "viewer") {
-    await page.getByLabel("Demo role").selectOption(role);
+    await page.getByLabel("View workspace as").selectOption(role);
     await page.waitForLoadState("domcontentloaded");
-    await expect(page.getByLabel("Demo role")).toHaveValue(role);
+    await expect(page.getByLabel("View workspace as")).toHaveValue(role);
   }
 
   await select("admin");
@@ -32,5 +31,5 @@ test("real OIDC owner previews backend-enforced roles", async ({ page, baseURL }
   expect(viewerUploadStatus).toBe(403);
   await page.getByRole("button", { name: "Return to Owner" }).first().click();
   await page.waitForLoadState("domcontentloaded");
-  await expect(page.getByLabel("Demo role")).toHaveValue("owner");
+  await expect(page.getByLabel("View workspace as")).toHaveValue("owner");
 });

@@ -5,9 +5,9 @@ from time import perf_counter
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +18,7 @@ from app.api.answers import (
     ask,
     get_answer_generator_dependency,
 )
+from app.api.enterprise import business_audit_event
 from app.api.search import (
     authorize_collection,
     get_embedding_provider,
@@ -27,6 +28,7 @@ from app.assistant_intents import deterministic_intent, deterministic_message
 from app.auth import TrustedPrincipal, get_trusted_principal
 from app.core.config import get_settings
 from app.db.models import (
+    AuditEvent,
     Conversation,
     ConversationCitation,
     ConversationMessage,
@@ -257,6 +259,55 @@ async def get_conversation(
         created_at=item.created_at,
         updated_at=item.updated_at,
     )
+
+
+@router.delete(
+    "/collections/{collection_id}/conversations/{conversation_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_conversation(
+    collection_id: UUID,
+    conversation_id: UUID,
+    principal: Annotated[TrustedPrincipal, Depends(get_trusted_principal)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> Response:
+    tenant_id = await authorize_collection(session, principal, collection_id)
+    removed = await session.scalar(
+        delete(Conversation)
+        .where(
+            Conversation.id == conversation_id,
+            Conversation.tenant_id == tenant_id,
+            Conversation.collection_id == collection_id,
+            Conversation.created_by_user_id == principal.user_id,
+        )
+        .returning(Conversation.id)
+    )
+    if removed is None:
+        already_deleted = await session.scalar(
+            select(AuditEvent.id).where(
+                AuditEvent.tenant_id == tenant_id,
+                AuditEvent.actor_user_id == principal.user_id,
+                AuditEvent.action == "conversation.deleted",
+                AuditEvent.target_type == "conversation",
+                AuditEvent.target_id == conversation_id,
+                AuditEvent.outcome == "success",
+            )
+        )
+        if already_deleted is None:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+    else:
+        session.add(
+            business_audit_event(
+                tenant_id,
+                principal.user_id,
+                None,
+                "conversation.deleted",
+                "conversation",
+                conversation_id,
+            )
+        )
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get(

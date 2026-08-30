@@ -6,6 +6,7 @@ from app.db.base import Base
 EXPECTED_TABLES = {
     "answer_feedback",
     "audit_events",
+    "collection_deletions",
     "collections",
     "collection_grants",
     "conversations",

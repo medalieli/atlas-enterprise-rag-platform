@@ -159,7 +159,7 @@ export async function changeDemoRole(tenantId: string, role: "owner" | "admin" |
     body: JSON.stringify({ tenant_id: tenantId, role }),
     cache: "no-store",
   });
-  if (!response.ok) throw new ApiError(response.status, "Demo role could not be changed.");
+  if (!response.ok) throw new ApiError(response.status, "Workspace view could not be changed.");
   return response.json() as Promise<{ effective_role: typeof role }>;
 }
 export const key = () => crypto.randomUUID();

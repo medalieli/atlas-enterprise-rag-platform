@@ -3,13 +3,20 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, func, select
 
 from app.api.answers import get_answer_generator_dependency
 from app.api.conversations import get_rewriter_dependency
 from app.api.search import get_embedding_provider, get_reranker_dependency
 from app.auth import TrustedPrincipal, get_trusted_principal
-from app.db.models import Collection, Membership, Organization, User
+from app.db.models import (
+    AuditEvent,
+    Collection,
+    Conversation,
+    Membership,
+    Organization,
+    User,
+)
 from app.db.session import session_factory
 from app.main import app
 from app.rewriting import RewriteOutput, RewriteResult
@@ -51,7 +58,12 @@ class ClarifyingRewriter:
 
 
 async def test_owned_conversation_first_turn_and_idempotency() -> None:
-    tenant_id, user_id, collection_id = uuid4(), uuid4(), uuid4()
+    tenant_id, user_id, other_user_id, collection_id = (
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+    )
     async with session_factory() as session, session.begin():
         session.add(
             Organization(
@@ -61,8 +73,18 @@ async def test_owned_conversation_first_turn_and_idempotency() -> None:
         session.add(
             User(id=user_id, issuer="https://issuer.test", subject=str(user_id))
         )
+        session.add(
+            User(
+                id=other_user_id,
+                issuer="https://issuer.test",
+                subject=str(other_user_id),
+            )
+        )
         await session.flush()
         session.add(Membership(tenant_id=tenant_id, user_id=user_id, role="owner"))
+        session.add(
+            Membership(tenant_id=tenant_id, user_id=other_user_id, role="owner")
+        )
         session.add(
             Collection(id=collection_id, tenant_id=tenant_id, name="Conversation docs")
         )
@@ -80,6 +102,7 @@ async def test_owned_conversation_first_turn_and_idempotency() -> None:
         ) as client:
             created = await client.post(f"/collections/{collection_id}/conversations")
             conversation_id = created.json()["id"]
+            retained = await client.post(f"/collections/{collection_id}/conversations")
             path = (
                 f"/collections/{collection_id}/conversations/{conversation_id}/messages"
             )
@@ -106,6 +129,19 @@ async def test_owned_conversation_first_turn_and_idempotency() -> None:
                 json={"query": "Does that still apply?", "top_k": 3},
             )
             messages = await client.get(path)
+            removed = await client.delete(
+                f"/collections/{collection_id}/conversations/{conversation_id}"
+            )
+            replay = await client.delete(
+                f"/collections/{collection_id}/conversations/{conversation_id}"
+            )
+            missing = await client.get(path)
+            app.dependency_overrides[get_trusted_principal] = lambda: TrustedPrincipal(
+                None, other_user_id
+            )
+            denied = await client.delete(
+                f"/collections/{collection_id}/conversations/{conversation_id}"
+            )
         assert created.status_code == 201
         assert first.status_code == 200, first.text
         assert first.json()["rewriting_applied"] is False
@@ -124,6 +160,21 @@ async def test_owned_conversation_first_turn_and_idempotency() -> None:
             "user",
             "assistant",
         ]
+        assert removed.status_code == 204
+        assert replay.status_code == 204
+        assert denied.status_code == 404
+        assert missing.status_code == 404
+        async with session_factory() as session:
+            assert await session.get(Conversation, retained.json()["id"]) is not None
+            assert (
+                await session.scalar(
+                    select(func.count(AuditEvent.id)).where(
+                        AuditEvent.action == "conversation.deleted",
+                        AuditEvent.target_id == conversation_id,
+                    )
+                )
+                == 1
+            )
     finally:
         app.dependency_overrides.clear()
         async with session_factory() as session, session.begin():
@@ -131,3 +182,4 @@ async def test_owned_conversation_first_turn_and_idempotency() -> None:
                 delete(Organization).where(Organization.id == tenant_id)
             )
             await session.execute(delete(User).where(User.id == user_id))
+            await session.execute(delete(User).where(User.id == other_user_id))

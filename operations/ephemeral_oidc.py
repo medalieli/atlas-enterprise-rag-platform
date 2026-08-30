@@ -195,12 +195,15 @@ def main() -> None:
     parser.add_argument("--signing-key", type=Path, required=True)
     parser.add_argument("--client-secret-file", type=Path, required=True)
     parser.add_argument("--port", type=int, default=9444)
+    parser.add_argument("--bind", default="127.0.0.1")
     parser.add_argument("--insecure-http", action="store_true")
     parser.add_argument("--subject", default="m15-admin")
     parser.add_argument("--email", default="atlas-admin@example.test")
     parser.add_argument("--interactive-identities", action="store_true")
     parser.add_argument("--redirect-uri", default="https://localhost/api/auth/callback")
     args = parser.parse_args()
+    if args.bind not in {"127.0.0.1", "::1", "localhost"}:
+        parser.error("the synthetic issuer must bind to a loopback address")
     private_key = serialization.load_pem_private_key(
         args.signing_key.read_bytes(), password=None
     )
@@ -220,7 +223,7 @@ def main() -> None:
         "owner": (Issuer.subject, Issuer.email),
     }
     Issuer.interactive_identities = args.interactive_identities
-    server = ThreadingHTTPServer(("0.0.0.0", args.port), Issuer)
+    server = ThreadingHTTPServer((args.bind, args.port), Issuer)
     if not args.insecure_http:
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(args.cert, args.key)

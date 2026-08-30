@@ -1,9 +1,9 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.enterprise import business_audit_event
@@ -17,8 +17,17 @@ from app.auth import (
     require_membership,
 )
 from app.core.config import get_settings
-from app.db.models import Collection, CollectionGrant, Membership, MembershipRole
+from app.db.models import (
+    Collection,
+    CollectionDeletion,
+    CollectionGrant,
+    Document,
+    DocumentVersion,
+    Membership,
+    MembershipRole,
+)
 from app.db.session import get_session
+from app.storage import LocalDocumentStorage
 
 router = APIRouter(tags=["identity and collections"])
 
@@ -203,3 +212,130 @@ async def create_collection(
         description=collection.description,
         access_role="manager",
     )
+
+
+@router.delete("/collections/{collection_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_collection(
+    collection_id: UUID,
+    principal: Annotated[TrustedPrincipal, Depends(get_trusted_principal)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> Response:
+    collection = await session.scalar(
+        select(Collection).where(Collection.id == collection_id).with_for_update()
+    )
+    if collection is None:
+        deletion = await session.scalar(
+            select(CollectionDeletion)
+            .join(
+                Membership,
+                (Membership.tenant_id == CollectionDeletion.tenant_id)
+                & (Membership.user_id == principal.user_id)
+                & (Membership.enabled.is_(True))
+                & (Membership.status == "active"),
+            )
+            .where(CollectionDeletion.collection_id == collection_id)
+            .with_for_update()
+        )
+        if deletion is None:
+            raise HTTPException(status_code=404, detail="Collection not found")
+        await require_membership(
+            session,
+            principal.user_id,
+            deletion.tenant_id,
+            Permission.MANAGE_COLLECTIONS,
+        )
+        return await _finish_collection_storage_cleanup(session, deletion)
+    membership = await require_membership(
+        session,
+        principal.user_id,
+        collection.tenant_id,
+        Permission.MANAGE_COLLECTIONS,
+    )
+    storage_keys = list(
+        (
+            await session.scalars(
+                select(DocumentVersion.storage_key).where(
+                    DocumentVersion.collection_id == collection_id,
+                    DocumentVersion.tenant_id == collection.tenant_id,
+                )
+            )
+        ).all()
+    )
+    tenant_id = collection.tenant_id
+    deletion = CollectionDeletion(
+        tenant_id=tenant_id,
+        collection_id=collection_id,
+        requested_by_user_id=principal.user_id,
+        storage_keys=storage_keys,
+    )
+    session.add(deletion)
+    await session.execute(
+        update(Document)
+        .where(
+            Document.tenant_id == tenant_id,
+            Document.collection_id == collection_id,
+        )
+        .values(active_version_id=None)
+    )
+    await session.execute(
+        update(DocumentVersion)
+        .where(
+            DocumentVersion.tenant_id == tenant_id,
+            DocumentVersion.collection_id == collection_id,
+        )
+        .values(active_generation_id=None)
+    )
+    await session.delete(collection)
+    session.add(
+        business_audit_event(
+            tenant_id,
+            principal.user_id,
+            membership.role.value,
+            "collection.deleted",
+            "collection",
+            collection_id,
+        )
+    )
+    await session.commit()
+    deletion = await session.scalar(
+        select(CollectionDeletion)
+        .where(CollectionDeletion.id == deletion.id)
+        .with_for_update()
+    )
+    if deletion is None:
+        raise RuntimeError("Collection cleanup state was not persisted")
+    return await _finish_collection_storage_cleanup(session, deletion)
+
+
+async def _finish_collection_storage_cleanup(
+    session: AsyncSession, deletion: CollectionDeletion
+) -> Response:
+    if deletion.status == "complete":
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    storage = LocalDocumentStorage(get_settings().document_storage_path)
+    try:
+        for storage_key in deletion.storage_keys:
+            await storage.delete(storage_key)
+    except OSError as exc:
+        deletion.failure_category = "storage_unavailable"
+        session.add(
+            business_audit_event(
+                deletion.tenant_id,
+                deletion.requested_by_user_id,
+                None,
+                "collection.cleanup_pending",
+                "collection",
+                deletion.collection_id,
+            )
+        )
+        await session.commit()
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Collection data was removed; storage cleanup will complete on retry"
+            ),
+        ) from exc
+    deletion.status = "complete"
+    deletion.failure_category = None
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

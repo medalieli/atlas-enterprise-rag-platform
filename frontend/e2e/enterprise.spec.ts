@@ -135,6 +135,10 @@ test("owner administers members, invitations, audit and analytics accessibly", a
   await page.screenshot({ path: `qa/audit-${testInfo.project.name}.png`, fullPage: true });
   await page.goto("/admin/analytics");
   await expect(page.getByText("Active users")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Answer latency" })).toBeVisible();
+  await expect(page.getByText("0.1s", { exact: true })).toBeVisible();
+  await expect(page.getByText("0.2s", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Positive feedback rate|Unavailable/)).toHaveCount(0);
   await page.screenshot({ path: `qa/analytics-${testInfo.project.name}.png`, fullPage: true });
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 });

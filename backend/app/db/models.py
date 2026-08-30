@@ -366,6 +366,35 @@ class Collection(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     description: Mapped[str | None] = mapped_column(Text)
 
 
+class CollectionDeletion(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "collection_deletions"
+    __table_args__ = (
+        UniqueConstraint("collection_id", name="uq_collection_deletions_collection"),
+        CheckConstraint(
+            "status IN ('pending','complete')", name="ck_collection_deletions_status"
+        ),
+        Index("ix_collection_deletions_tenant_status", "tenant_id", "status"),
+    )
+    tenant_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    collection_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=False
+    )
+    requested_by_user_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    storage_keys: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="pending", server_default="pending"
+    )
+    failure_category: Mapped[str | None] = mapped_column(String(100))
+
+
 class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "documents"
     __table_args__ = (

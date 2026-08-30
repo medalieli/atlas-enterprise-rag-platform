@@ -13,13 +13,17 @@ const json = (route: Route, value: unknown, status = 200) =>
     contentType: "application/json",
     body: JSON.stringify(value),
   });
-async function mock(page: Page, role = "admin") {
+async function mock(page: Page, role = "admin", transientAuthFailures = 0) {
   await page.route("**/api/auth/csrf", (r) => json(r, { token: "csrf" }));
   await page.route("**/api/auth/logout", (r) => json(r, { ok: true }));
   await page.route("**/api/backend/**", async (route) => {
     const u = new URL(route.request().url());
     const p = u.pathname.replace("/api/backend", "");
     const method = route.request().method();
+    if (p === "/auth/me" && transientAuthFailures > 0) {
+      transientAuthFailures -= 1;
+      return json(route, { detail: "temporarily unavailable" }, 503);
+    }
     if (p === "/auth/me")
       return json(route, {
         principal_id: "user",
@@ -47,6 +51,14 @@ async function mock(page: Page, role = "admin") {
           access_role: "manager",
         },
       ]);
+    if (p === "/collections" && method === "POST")
+      return json(route, { id: "20000000-0000-0000-0000-000000000002", tenant_id: ids.tenant, name: "New collection", description: null, access_role: "manager" }, 201);
+    if (p === `/collections/${ids.collection}` && method === "DELETE")
+      return route.fulfill({ status: 204, body: "" });
+    if (p === "/collections/20000000-0000-0000-0000-000000000002/documents" && method === "GET")
+      return json(route, []);
+    if (p === "/collections/20000000-0000-0000-0000-000000000002/conversations" && method === "GET")
+      return json(route, { conversations: [], next_cursor: null });
     if (p === `/collections/${ids.collection}/documents` && method === "GET")
       return json(route, [
         {
@@ -161,6 +173,8 @@ async function mock(page: Page, role = "admin") {
           ],
         },
       });
+    if (p === `/collections/${ids.collection}/conversations/${ids.conversation}` && method === "DELETE")
+      return route.fulfill({ status: 204, body: "" });
     if (p.endsWith("/feedback") && method === "PUT")
       return json(route, { id: "feedback", rating: "helpful", reason: null });
     return json(route, { detail: "mock route missing" }, 404);
@@ -244,4 +258,37 @@ test("workspace dashboard summarizes the current collection", async ({ page }, t
   await expect(page.getByRole("heading", { name: "Operations Library" })).toBeVisible();
   await expect(page.getByText("Ready documents")).toBeVisible();
   await page.screenshot({ path: `qa/dashboard-${testInfo.project.name}.png`, fullPage: true });
+});
+
+test("workspace recovers from a transient identity startup failure without reload", async ({ page }) => {
+  await mock(page, "admin", 1);
+  await page.goto("/dashboard");
+  await expect(page.getByText("Current user")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Operations Library" })).toBeVisible();
+  await expect(page.getByText("The service is temporarily unavailable.")).toHaveCount(0);
+});
+
+test("administrators create and delete collections with confirmation", async ({ page }, testInfo) => {
+  await mock(page);
+  await page.goto("/dashboard");
+  if (testInfo.project.name === "mobile") await page.getByRole("button", { name: "Open navigation" }).click();
+  await page.getByRole("button", { name: "Delete collection" }).click();
+  await expect(page.getByRole("dialog").getByRole("button", { name: "Delete collection" })).toBeDisabled();
+  await page.getByRole("dialog").getByLabel("Type Operations Library to confirm").fill("Operations Library");
+  await page.getByRole("dialog").getByRole("button", { name: "Delete collection" }).click();
+  await expect(page.getByRole("heading", { name: "No collections available" })).toBeVisible();
+  if (testInfo.project.name === "mobile") await page.getByRole("complementary", { name: "Primary navigation" }).getByRole("button", { name: "Close navigation" }).click();
+  await page.getByRole("button", { name: "Create collection" }).click();
+  await page.getByRole("dialog").getByLabel("Name").fill("New collection");
+  await page.getByRole("dialog").getByRole("button", { name: "Create" }).click();
+  await expect(page.getByRole("heading", { name: "New collection" })).toBeVisible();
+});
+
+test("a conversation can be removed with its history", async ({ page }) => {
+  await mock(page);
+  await page.goto("/chat");
+  await page.getByRole("button", { name: "Delete latest conversation" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Delete conversation" }).click();
+  await expect(page.getByText("No conversations yet.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Start a conversation" })).toBeVisible();
 });

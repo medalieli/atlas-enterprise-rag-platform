@@ -82,22 +82,45 @@ selected invitee profile, then choose **Invitee** in a completely new browser
 context. These immutable synthetic subjects are not production credentials, use no
 passwords, and are unavailable unless the test-only utility is started explicitly.
 
-## Development role preview
+## Owner role selector and local showcase
 
-`DEMO_ROLE_PREVIEW_ENABLED` defaults to `false` and is restricted to development
-and test environments. When enabled with a separate 32-character-or-longer
-`DEMO_ROLE_PREVIEW_SECRET`, a real organization owner can preview Owner, Admin,
-Editor, and Viewer authorization without creating synthetic accounts or signing in
-again. The browser submits only a requested enum and tenant identifier through the
-CSRF-protected BFF. The API verifies the real owner membership and returns a signed,
-owner-bound preview grant; the BFF stores that grant only inside the encrypted,
-HttpOnly session cookie. Backend authorization validates the grant on every request,
-and audit events keep the real actor while recording `effective_demo_role`.
+Atlas has one user-facing interface. Its Owner-only role selector applies Owner,
+Admin, Editor, or Viewer permissions without creating another identity or asking the
+Owner to sign in again. The browser submits only a requested enum and tenant
+identifier through the CSRF-protected BFF. The API verifies the real Owner membership
+and returns a signed, Owner-bound grant; the BFF stores that grant only inside the
+encrypted, HttpOnly session cookie. Backend authorization validates the grant on
+every request, analytics remain associated with the real Owner, and audit events keep
+the real actor while recording `effective_demo_role`. **Return to Owner** is always
+available while a reduced role is selected.
 
 Production configuration validation rejects role preview. The production Compose
 override also pins it off. Members and Invitations remain fully implemented in the
 API and database, but their navigation and frontend routes are unavailable while
 the development demo is active.
+
+The default portfolio showcase may use one explicitly configured synthetic Owner.
+`LOCAL_SYNTHETIC_OWNER_ENABLED=true` is accepted only with `APP_ENV=development`, a
+loopback `APP_BASE_URL`, and a loopback authorization endpoint. The disposable issuer
+itself binds only to loopback. Missing or contradictory settings fail closed, and
+production rejects this switch. A real company deployment requires HTTPS OIDC,
+provisioned real identities, and user-management configuration; it can never receive
+automatic Owner access.
+
+## Workspace cleanup policy
+
+Conversation deletion is creator-scoped, cascades through messages, turns, citations,
+and feedback, and leaves one immutable audit event. Repeating the same deletion by
+the same creator is safe; another identity receives the normal non-enumerating denial.
+
+Collection deletion requires Owner/Admin authorization and a typed-name confirmation.
+The database transaction captures exact storage keys in a durable tenant-scoped
+cleanup tombstone, clears active lifecycle pointers, removes the collection cascade,
+and writes the immutable deletion audit event. Retrieval cannot see the collection
+after that commit. Storage cleanup then uses the configured storage abstraction. A
+storage outage is observable and retryable by repeating the same DELETE; exact-key
+deletion is idempotent and the tombstone records completion without touching other
+collections.
 
 Permissions are centralized as `tenant:read`, `document:upload` and
 `collection:manage`. Unknown/missing resources and cross-tenant resources return the

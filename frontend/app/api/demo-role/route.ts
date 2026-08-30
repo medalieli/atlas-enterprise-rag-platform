@@ -7,7 +7,7 @@ const roles = new Set(["owner", "admin", "editor", "viewer"]);
 
 export async function POST(request: NextRequest) {
   if (process.env.DEMO_ROLE_PREVIEW_ENABLED !== "true" || process.env.APP_ENV === "production")
-    return NextResponse.json({ detail: "Demo role preview is unavailable" }, { status: 404 });
+    return NextResponse.json({ detail: "Workspace role view is unavailable" }, { status: 404 });
   const jar = await cookies();
   const csrf = jar.get("rag_csrf")?.value;
   if (!csrf || csrf !== request.headers.get("x-csrf-token") || request.headers.get("origin") !== applicationOrigin(request) || request.headers.get("sec-fetch-site") === "cross-site")
@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
     cache: "no-store",
     redirect: "manual",
   });
-  if (!response.ok) return NextResponse.json({ detail: "Demo role could not be changed" }, { status: response.status });
+  if (!response.ok) return NextResponse.json({ detail: "Workspace role view could not be changed" }, { status: response.status });
   const result = await response.json() as { effective_role: "owner" | "admin" | "editor" | "viewer"; preview_token: string };
   await setSession({ ...session, demoPreviewToken: result.preview_token, effectiveDemoRole: result.effective_role });
   return NextResponse.json({ effective_role: result.effective_role }, { headers: { "Cache-Control": "private, no-store" } });

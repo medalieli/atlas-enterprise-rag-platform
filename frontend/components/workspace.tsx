@@ -34,6 +34,20 @@ function errorText(error: unknown) {
   }
   return "Something went wrong.";
 }
+const startupRetryDelays = [150, 400, 900];
+async function startupRead<T>(path: string): Promise<T> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await api<T>(path);
+    } catch (error) {
+      const transient =
+        error instanceof ApiError &&
+        (error.status === 0 || error.status === 502 || error.status === 503 || error.status === 504);
+      if (!transient || attempt >= startupRetryDelays.length) throw error;
+      await new Promise((resolve) => setTimeout(resolve, startupRetryDelays[attempt]));
+    }
+  }
+}
 function Status({ value }: { value: string }) {
   return (
     <span className={`badge ${value.replaceAll("_", "-")}`}>
@@ -56,6 +70,8 @@ export function Workspace({
   const [loading, setLoading] = useState(true);
   const [mobile, setMobile] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [deleteCollectionOpen, setDeleteCollectionOpen] = useState(false);
+  const [deleteCollectionConfirmation, setDeleteCollectionConfirmation] = useState("");
   const [roleChanging, setRoleChanging] = useState(false);
   const membership =
     identity?.memberships.find(
@@ -65,12 +81,12 @@ export function Workspace({
     ) ?? identity?.memberships[0];
   async function load() {
     try {
-      const me = await api<Identity>("/auth/me");
+      const me = await startupRead<Identity>("/auth/me");
       setIdentity(me);
       const groups = (
         await Promise.all(
           me.memberships.map((m) =>
-            api<Collection[]>(`/collections?tenant_id=${m.tenant_id}`),
+            startupRead<Collection[]>(`/collections?tenant_id=${m.tenant_id}`),
           ),
         )
       ).flat();
@@ -80,6 +96,11 @@ export function Workspace({
         groups.some((c) => c.id === saved) ? saved! : groups[0]?.id || "",
       );
     } catch (e) {
+      if (e instanceof ApiError && e.status === 401) {
+        const returnTo = `${window.location.pathname}${window.location.search}`;
+        window.location.replace(`/api/auth/login?returnTo=${encodeURIComponent(returnTo)}`);
+        return;
+      }
       setError(errorText(e));
     } finally {
       setLoading(false);
@@ -115,6 +136,19 @@ export function Workspace({
     } catch (e) {
       setError(errorText(e));
       setRoleChanging(false);
+    }
+  }
+  async function deleteCurrentCollection() {
+    if (!collectionId) return;
+    try {
+      await api(`/collections/${collectionId}`, { method: "DELETE" });
+      const remaining = collections.filter((collection) => collection.id !== collectionId);
+      setCollections(remaining);
+      setCollectionId(remaining[0]?.id ?? "");
+      setDeleteCollectionOpen(false);
+      setDeleteCollectionConfirmation("");
+    } catch (e) {
+      setError(errorText(e));
     }
   }
   if (loading)
@@ -180,9 +214,15 @@ export function Workspace({
         {!collections.length && (
           <div className="sidebar-empty">No collections yet.</div>
         )}
+        {membership && ["owner", "admin"].includes(membership.role) && (
+          <div className="collection-actions">
+            <button type="button" onClick={() => setCreateOpen(true)}>New collection</button>
+            {collectionId && <button className="danger" type="button" onClick={() => { setDeleteCollectionConfirmation(""); setDeleteCollectionOpen(true); }}>Delete collection</button>}
+          </div>
+        )}
         {identity?.demo_role_preview_enabled && membership?.real_role === "owner" && (
           <div className="demo-role-control">
-            <label htmlFor="demo-role">Demo role</label>
+            <label htmlFor="demo-role">View workspace as</label>
             <select
               id="demo-role"
               value={identity.effective_demo_role ?? "owner"}
@@ -245,8 +285,8 @@ export function Workspace({
       <main className={`workspace ${initialView === "chat" ? "chat-workspace" : ""}`} id="main-content">
         {identity?.effective_demo_role && identity.effective_demo_role !== "owner" && (
           <div className="demo-role-banner" role="status">
-            <strong>Demo role: {identity.effective_demo_role[0].toUpperCase() + identity.effective_demo_role.slice(1)}</strong>
-            <span>Real owner identity retained; backend permissions reflect this preview.</span>
+            <strong>Viewing as {identity.effective_demo_role[0].toUpperCase() + identity.effective_demo_role.slice(1)}</strong>
+            <span>Your owner identity stays active while permissions match this role.</span>
             <button type="button" onClick={() => void selectDemoRole("owner")} disabled={roleChanging}>Return to Owner</button>
           </div>
         )}
@@ -302,6 +342,16 @@ export function Workspace({
             setCreateOpen(false);
           }}
         />
+      )}
+      {deleteCollectionOpen && (
+        <Dialog title="Delete collection" onClose={() => { setDeleteCollectionOpen(false); setDeleteCollectionConfirmation(""); }}>
+          <p>Delete <strong>{collections.find((collection) => collection.id === collectionId)?.name}</strong> and all of its documents, conversations, and indexed content? This cannot be undone.</p>
+          <label>Type {collections.find((collection) => collection.id === collectionId)?.name} to confirm<input value={deleteCollectionConfirmation} onChange={(event) => setDeleteCollectionConfirmation(event.target.value)} autoComplete="off" /></label>
+          <div className="dialog-actions">
+            <button type="button" onClick={() => { setDeleteCollectionOpen(false); setDeleteCollectionConfirmation(""); }}>Cancel</button>
+            <button className="button danger-fill" type="button" disabled={deleteCollectionConfirmation !== collections.find((collection) => collection.id === collectionId)?.name} onClick={() => void deleteCurrentCollection()}>Delete collection</button>
+          </div>
+        </Dialog>
       )}
     </div>
   );
@@ -815,6 +865,7 @@ function Chat({ collectionId }: { collectionId: string }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [citation, setCitation] = useState<Citation>();
+  const [conversationToDelete, setConversationToDelete] = useState<Conversation>();
   const answerRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
   const nearBottomRef = useRef(true);
@@ -881,6 +932,26 @@ function Chat({ collectionId }: { collectionId: string }) {
       );
       setConversations((x) => [c, ...x]);
       setCurrent(c.id);
+    } catch (e) {
+      setError(errorText(e));
+    }
+  }
+  async function removeConversation() {
+    if (!conversationToDelete) return;
+    try {
+      await api(
+        `/collections/${collectionId}/conversations/${conversationToDelete.id}`,
+        { method: "DELETE" },
+      );
+      const remaining = conversations.filter(
+        (conversation) => conversation.id !== conversationToDelete.id,
+      );
+      setConversations(remaining);
+      if (current === conversationToDelete.id) {
+        setCurrent(remaining[0]?.id ?? "");
+        setMessages([]);
+      }
+      setConversationToDelete(undefined);
     } catch (e) {
       setError(errorText(e));
     }
@@ -952,20 +1023,13 @@ function Chat({ collectionId }: { collectionId: string }) {
           </button>
         </div>
         {conversations.map((c, i) => (
-          <button
-            className={current === c.id ? "selected" : ""}
-            key={c.id}
-            onClick={() => setCurrent(c.id)}
-          >
-            <b>
-              {i === 0
-                ? "Latest conversation"
-                : `Conversation ${conversations.length - i}`}
-            </b>
-            <small>
-              {new Date(c.updated_at ?? c.created_at).toLocaleDateString()}
-            </small>
-          </button>
+          <div className={`conversation-item ${current === c.id ? "selected" : ""}`} key={c.id}>
+            <button className="conversation-select" onClick={() => setCurrent(c.id)}>
+              <b>{i === 0 ? "Latest conversation" : `Conversation ${conversations.length - i}`}</b>
+              <small>{new Date(c.updated_at ?? c.created_at).toLocaleDateString()}</small>
+            </button>
+            <button className="conversation-delete" aria-label={`Delete ${i === 0 ? "latest conversation" : `conversation ${conversations.length - i}`}`} onClick={() => setConversationToDelete(c)}>×</button>
+          </div>
         ))}
         {!conversations.length && <p>No conversations yet.</p>}
       </aside>
@@ -1107,6 +1171,15 @@ function Chat({ collectionId }: { collectionId: string }) {
           collectionId={collectionId}
           onClose={() => setCitation(undefined)}
         />
+      )}
+      {conversationToDelete && (
+        <Dialog title="Delete conversation" onClose={() => setConversationToDelete(undefined)}>
+          <p>Delete this conversation and its complete message history? This cannot be undone.</p>
+          <div className="dialog-actions">
+            <button type="button" onClick={() => setConversationToDelete(undefined)}>Cancel</button>
+            <button className="button danger-fill" type="button" onClick={() => void removeConversation()}>Delete conversation</button>
+          </div>
+        </Dialog>
       )}
     </div>
   );

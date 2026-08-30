@@ -468,20 +468,12 @@ export function AdminPortal({
         ))}
       </div>
       {analytics && (
-        <div className="panel">
-          <h2>Response quality</h2>
-          <p>
-            Positive feedback rate:{" "}
-            {analytics.positive_feedback_rate === null
-              ? "Unavailable"
-              : `${Math.round(analytics.positive_feedback_rate * 100)}%`}
-          </p>
-          <p>
-            Median / p95 latency:{" "}
-            {analytics.median_response_ms === null
-              ? "Unavailable"
-              : `${Math.round(analytics.median_response_ms)} / ${Math.round(analytics.p95_response_ms!)} ms`}
-          </p>
+        <div className="panel response-performance">
+          <div><p className="eyebrow">RESPONSE PERFORMANCE</p><h2>Answer latency</h2></div>
+          <div className="response-metrics">
+            <div><span>Median</span><strong>{analytics.median_response_ms === null ? "—" : `${(analytics.median_response_ms / 1000).toFixed(1)}s`}</strong></div>
+            <div><span>95th percentile</span><strong>{analytics.p95_response_ms === null ? "—" : `${(analytics.p95_response_ms / 1000).toFixed(1)}s`}</strong></div>
+          </div>
         </div>
       )}
     </AdminPage>

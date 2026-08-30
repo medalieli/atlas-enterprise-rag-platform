@@ -1,18 +1,25 @@
 import os
+from types import SimpleNamespace
 from uuid import uuid4
 
 import httpx
 import pytest
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 
 from app.auth import ExternalIdentity, TrustedPrincipal, get_trusted_principal
 from app.bootstrap_identity import bind_identity
 from app.core.config import Settings
 from app.db.models import (
+    AuditEvent,
     Collection,
+    CollectionDeletion,
     CollectionGrant,
     CollectionRole,
+    Conversation,
+    Document,
+    DocumentIndexGeneration,
+    DocumentVersion,
     Membership,
     MembershipRole,
     Organization,
@@ -20,6 +27,8 @@ from app.db.models import (
 )
 from app.db.session import session_factory
 from app.main import app
+from app.storage import LocalDocumentStorage
+from tests.fixture_builders import add_active_lifecycle
 
 pytestmark = [
     pytest.mark.asyncio,
@@ -100,12 +109,16 @@ async def test_viewer_identity_and_collection_permissions() -> None:
                 "/collections",
                 json={"tenant_id": str(tenant_id), "name": "Denied"},
             )
+            denied_delete = await client.delete(
+                f"/collections/{listed.json()[0]['id']}"
+            )
         assert me.status_code == 200
         assert me.json()["principal_id"] == str(user_id)
         assert me.json()["memberships"][0]["role"] == "member"
         assert listed.status_code == 200
         assert listed.json()[0]["name"] == "Existing"
         assert denied.status_code == 403
+        assert denied_delete.status_code == 403
     finally:
         app.dependency_overrides.clear()
         await cleanup(tenant_id, user_id)
@@ -137,9 +150,13 @@ async def test_admin_can_create_collection_and_cross_tenant_selector_fails() -> 
             denied = await client.get(
                 "/collections", params={"tenant_id": other_tenant_id}
             )
+            removed = await client.delete(f"/collections/{created.json()['id']}")
+            listed = await client.get("/collections", params={"tenant_id": tenant_id})
         assert created.status_code == 201
         assert created.json()["tenant_id"] == str(tenant_id)
         assert denied.status_code == 403
+        assert removed.status_code == 204
+        assert [item["name"] for item in listed.json()] == ["Existing"]
     finally:
         app.dependency_overrides.clear()
         await cleanup(tenant_id, user_id)
@@ -147,6 +164,159 @@ async def test_admin_can_create_collection_and_cross_tenant_selector_fails() -> 
             await session.execute(
                 delete(Organization).where(Organization.id == other_tenant_id)
             )
+
+
+async def test_collection_deletion_is_isolated_recoverable_and_idempotent(
+    tmp_path: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tenant_id, user_id, retained_collection_id = await seed_identity(
+        MembershipRole.ADMIN
+    )
+    removed_collection_id, removed_document_id, retained_document_id = (
+        uuid4(),
+        uuid4(),
+        uuid4(),
+    )
+    other_tenant_id, other_user_id = uuid4(), uuid4()
+    async with session_factory() as session, session.begin():
+        session.add(
+            Organization(
+                id=other_tenant_id,
+                name="Other deletion tenant",
+                slug=f"delete-{other_tenant_id}",
+            )
+        )
+        session.add(
+            User(
+                id=other_user_id,
+                issuer="https://issuer.integration.test",
+                subject=str(other_user_id),
+                enabled=True,
+            )
+        )
+        await session.flush()
+        session.add(
+            Membership(
+                tenant_id=other_tenant_id,
+                user_id=other_user_id,
+                role=MembershipRole.OWNER,
+                enabled=True,
+            )
+        )
+        session.add(
+            Collection(
+                id=removed_collection_id,
+                tenant_id=tenant_id,
+                name="Disposable",
+            )
+        )
+        await session.flush()
+        removed_version_id, _ = await add_active_lifecycle(
+            session,
+            tenant_id,
+            removed_collection_id,
+            removed_document_id,
+            filename="disposable.pdf",
+        )
+        retained_version_id, _ = await add_active_lifecycle(
+            session,
+            tenant_id,
+            retained_collection_id,
+            retained_document_id,
+            filename="retained.pdf",
+        )
+        session.add(
+            Conversation(
+                tenant_id=tenant_id,
+                collection_id=removed_collection_id,
+                created_by_user_id=user_id,
+            )
+        )
+    root = tmp_path  # type: ignore[assignment]
+    removed_key = (
+        f"{tenant_id.hex}/{removed_document_id.hex}/versions/"
+        f"{removed_version_id.hex}/original.pdf"
+    )
+    retained_key = (
+        f"{tenant_id.hex}/{retained_document_id.hex}/versions/"
+        f"{retained_version_id.hex}/original.pdf"
+    )
+    for key in (removed_key, retained_key):
+        target = root.joinpath(*key.split("/"))  # type: ignore[union-attr]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"synthetic")
+    monkeypatch.setattr(
+        "app.api.identity.get_settings",
+        lambda: SimpleNamespace(document_storage_path=str(root)),
+    )
+    original_delete = LocalDocumentStorage.delete
+    failures = 1
+
+    async def fail_once(storage: LocalDocumentStorage, key: str) -> None:
+        nonlocal failures
+        if failures:
+            failures -= 1
+            raise OSError("synthetic storage outage")
+        await original_delete(storage, key)
+
+    monkeypatch.setattr(LocalDocumentStorage, "delete", fail_once)
+    app.dependency_overrides[get_trusted_principal] = lambda: TrustedPrincipal(
+        None, user_id
+    )
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            interrupted = await client.delete(f"/collections/{removed_collection_id}")
+            retried = await client.delete(f"/collections/{removed_collection_id}")
+            replayed = await client.delete(f"/collections/{removed_collection_id}")
+            inaccessible = await client.get(
+                "/collections", params={"tenant_id": tenant_id}
+            )
+            app.dependency_overrides[get_trusted_principal] = lambda: TrustedPrincipal(
+                None, other_user_id
+            )
+            cross_tenant = await client.delete(f"/collections/{removed_collection_id}")
+        assert interrupted.status_code == 503
+        assert retried.status_code == 204
+        assert replayed.status_code == 204
+        assert cross_tenant.status_code == 404
+        assert [item["id"] for item in inaccessible.json()] == [
+            str(retained_collection_id)
+        ]
+        assert not root.joinpath(*removed_key.split("/")).exists()  # type: ignore[union-attr]
+        assert root.joinpath(*retained_key.split("/")).exists()  # type: ignore[union-attr]
+        async with session_factory() as session:
+            assert await session.get(Collection, removed_collection_id) is None
+            assert await session.get(Document, removed_document_id) is None
+            assert await session.get(DocumentVersion, removed_version_id) is None
+            assert (
+                await session.scalar(
+                    select(func.count(DocumentIndexGeneration.id)).where(
+                        DocumentIndexGeneration.document_id == removed_document_id
+                    )
+                )
+                == 0
+            )
+            deletion = await session.scalar(
+                select(CollectionDeletion).where(
+                    CollectionDeletion.collection_id == removed_collection_id
+                )
+            )
+            assert deletion is not None and deletion.status == "complete"
+            assert (
+                await session.scalar(
+                    select(func.count(AuditEvent.id)).where(
+                        AuditEvent.action == "collection.deleted",
+                        AuditEvent.target_id == removed_collection_id,
+                    )
+                )
+                == 1
+            )
+    finally:
+        app.dependency_overrides.clear()
+        await cleanup(tenant_id, user_id)
+        await cleanup(other_tenant_id, other_user_id)
 
 
 async def test_disabled_membership_is_rejected() -> None:
