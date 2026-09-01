@@ -91,7 +91,7 @@ Use one synthetic organization and collection across the full tour.
 <table>
   <tr>
     <td width="50%" align="center">
-      <img src="docs/assets/screenshots/02-document-workspace.png" alt="Atlas document workspace and ingestion status"><br>
+      <img src="docs/portfolio/Atlas1.png" alt="Atlas document workspace and ingestion status"><br>
       <strong>Document workspace</strong><br>
       <sub>Multi-file upload, processing state, metadata, versions, reindexing, and deletion.</sub>
     </td>
