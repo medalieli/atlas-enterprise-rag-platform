@@ -51,7 +51,8 @@ COPY alembic.ini ./
 COPY migrations ./migrations
 COPY app ./app
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint
-RUN chmod 0555 /usr/local/bin/docker-entrypoint
+RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint \
+    && chmod 0555 /usr/local/bin/docker-entrypoint
 
 USER 10001:10001
 EXPOSE 8000
