@@ -18,7 +18,7 @@ jobs:
       - run: cd backend && uv export --frozen --no-dev --no-hashes -o requirements.txt
       - run: cd backend && sed -i '/^torch==/d' requirements.txt && uvx pip-audit --no-deps -r requirements.txt
       - run: cd frontend && npm audit --omit=dev --audit-level=high
-      - run: uvx bandit -r backend/app -q
+      - run: uvx bandit -r backend/app -q -ll
       - run: docker run --rm -v "$PWD:/src" zricethezav/gitleaks@sha256:cdbb7c955abce02001a9f6c9f602fb195b7fadc1e812065883f695d1eeaba854 detect --source=/src --no-banner
       - run: docker run --rm -i hadolint/hadolint@sha256:27086352fd5e1907ea2b934eb1023f217c5ae087992eb59fde121dce9c9ff21e < backend/Dockerfile
       - run: docker run --rm -i hadolint/hadolint@sha256:27086352fd5e1907ea2b934eb1023f217c5ae087992eb59fde121dce9c9ff21e < frontend/Dockerfile
