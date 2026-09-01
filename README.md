@@ -362,6 +362,8 @@ Open [http://localhost:3000](http://localhost:3000), then select **Sign up or Si
 
 For local development, the included synthetic OIDC provider signs the user into the seeded Owner workspace without requiring a password. The service on port `9444` is a development utility only; a real deployment must use an approved external OIDC provider.
 
+The local `.env.example` also enables the Owner-only portfolio role preview, so a fresh local installation can switch between Owner, Admin, Editor, and Viewer. Both the synthetic identity provider and role preview are rejected by production configuration safeguards.
+
 ### 10. Upload and use documents
 
 After signing in:
@@ -408,6 +410,12 @@ Application logs intentionally avoid document text, questions, answers, credenti
 
 ```bash
 docker compose up -d
+```
+
+After changing values in `.env`, recreate the containers so Docker applies the new environment configuration:
+
+```bash
+docker compose up -d --force-recreate
 ```
 
 ### Stop Atlas without deleting data
