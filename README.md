@@ -1,217 +1,520 @@
-# Production RAG Knowledge Assistant
+# Atlas
 
-A production-oriented multi-tenant system for ingesting PDF/DOCX sources, comparing lexical/vector/hybrid retrieval, and answering with server-validated exact-source citations. It is a portfolio project, not a claim of certification, high availability or measured production scale.
+<div align="center">
 
-![Synthetic product tour](docs/portfolio/synthetic-product-tour.png)
+**Enterprise AI Knowledge Platform**
 
-## Portfolio highlights
+Ask questions across controlled PDF and DOCX knowledge and receive grounded answers with server-validated citations.
 
-- OIDC-backed BFF sessions and database-derived tenant roles
-- idempotent traceable ingestion and immutable lifecycle generations
-- keyword, semantic, hybrid and local cross-encoder reranking
-- grounded answers, refusals and validated citation source access
-- deterministic fake-provider evaluation and privacy-conscious telemetry
-- hardened TLS-only edge, private services, file secrets and recovery tooling
-- organization administration, explicit collection grants and secure invitations
-- append-only business audit events, answer feedback and product analytics
-- deterministic English, French and Arabic onboarding replies with zero provider calls
+[![Status](https://img.shields.io/badge/status-deployment--ready-1f6f78?style=flat-square)](#project-status)
+[![Backend](https://img.shields.io/badge/backend-FastAPI-202a44?style=flat-square)](#technology-stack)
+[![Frontend](https://img.shields.io/badge/frontend-Next.js-111827?style=flat-square)](#technology-stack)
+[![Data](https://img.shields.io/badge/data-PostgreSQL%20%2B%20pgvector-315a7d?style=flat-square)](#technology-stack)
+[![Deployment](https://img.shields.io/badge/deployment-Docker%20Compose-374151?style=flat-square)](#download-and-run-atlas-locally)
 
-| Mode | Strength | Tradeoff | Synthetic Recall@10 |
-| --- | --- | --- | ---: |
-| Keyword | exact terms/codes | misses paraphrases | 0.9286 |
-| Semantic | paraphrases | weaker exact tokens | 0.9286 |
-| Hybrid | combines both | more database work | 1.0000 |
-| Reranked | final ordering | CPU/memory/latency | 1.0000 |
+<!-- Replace REPLACE_WITH_VIDEO_ID after uploading the final YouTube video. -->
+**[Watch the demonstration](https://www.youtube.com/watch?v=REPLACE_WITH_VIDEO_ID)** ·
+**[Architecture](#architecture)** ·
+**[Run locally](#download-and-run-atlas-locally)** ·
+**[Verification](#measured-verification)**
 
-Dataset `2026.08.1` has 14 synthetic cases; these are regression fixtures, not general accuracy claims. Production deployment, trust boundaries, recovery and the three-minute demo are documented in `docs/DEPLOYMENT.md`, `docs/THREAT_MODEL.md`, `docs/OPERATIONS.md` and `docs/PORTFOLIO.md`. Known limitations include application-enforced (not RLS) tenant isolation, single-host Compose, no OCR, bounded evaluation, local-model resource cost, provider token cost and no configured public deployment.
+</div>
 
-The Milestone 13 Next.js workspace, OAuth/OIDC Backend-for-Frontend setup, role
-behavior and frontend commands are documented in
-[`docs/FRONTEND.md`](docs/FRONTEND.md). The browser application runs at
-<http://localhost:3000> in Docker Compose.
+> **Project status:** All 15 roadmap milestones are complete. Atlas is deployment-ready and documented, but it is not currently available at a public production URL. Published evaluation results come from controlled synthetic fixtures and are not universal accuracy claims.
 
-Document replacement, immutable source versions, generation-based reindexing, and
-asynchronous hard deletion are described in
-[`docs/DOCUMENT_LIFECYCLE.md`](docs/DOCUMENT_LIFECYCLE.md).
+<!--
+SCREENSHOT PLACEHOLDER
+Replace docs/assets/screenshots/01-atlas-overview.png with the final application hero screenshot.
+Recommended: 1600 × 900, synthetic data only, no emails, tokens, local paths, or private documents.
+-->
 
-Lifecycle requests use authenticated collection scope and idempotency keys:
+<p align="center">
+  <img src="docs/assets/screenshots/01-atlas-overview.png" alt="Atlas enterprise knowledge workspace overview" width="900">
+</p>
+
+## Why Atlas
+
+Company knowledge is often scattered across policies, manuals, contracts, FAQs, and procedures. A useful enterprise assistant must do more than generate fluent text: it must retrieve the right authorized evidence, handle changing documents, preserve source lineage, reject unsupported answers, and remain operable when services fail.
+
+Atlas addresses that complete workflow:
+
+- securely ingest and process PDF and DOCX files;
+- retrieve exact identifiers and semantic matches;
+- rerank a bounded candidate set locally;
+- generate answers only from supplied evidence;
+- independently validate every citation;
+- enforce tenant, collection, and role authorization;
+- preserve conversations, document history, audit events, and operational evidence.
+
+## Key characteristics
+
+| Area | What Atlas provides |
+|---|---|
+| Grounded answers | Explicit `answered`, `insufficient_context`, and `conflicting_sources` outcomes instead of filling evidence gaps with general knowledge. |
+| Validated citations | Model-proposed source IDs are checked and resolved through authorized PostgreSQL records before reaching the user. |
+| Hybrid retrieval | PostgreSQL full-text search and pgvector semantic search, combined with deterministic Reciprocal Rank Fusion. |
+| Local reranking | A pinned multilingual cross-encoder reranks a bounded secured candidate pool. |
+| Secure ingestion | Streamed PDF/DOCX validation, object storage, asynchronous Celery processing, deterministic parsing, and traceable chunks. |
+| Metadata filtering | Typed filters are applied inside both retrieval branches before ranking and candidate limits. |
+| Document lifecycle | Upload, replace, version, reindex, delete, retryable cleanup, and stale-version exclusion. |
+| Conversation intelligence | Bounded history, follow-up rewriting, clarification behavior, pagination, and idempotent replay. |
+| Enterprise access | OIDC Authorization Code with PKCE, encrypted HttpOnly sessions, CSRF protection, and backend-enforced RBAC. |
+| Roles | Owner, Admin, Editor, and Viewer permissions, plus a controlled owner-only role preview for portfolio demonstrations. |
+| Audit and analytics | Append-only audit events, filtered export, latency and usage signals, unanswered-question visibility, and honest unavailable states. |
+| Production operations | Health checks, structured logging, metrics, tracing, failure testing, backups, restore verification, and private service networking. |
+| Hardened runtime | HTTPS, non-root containers, read-only filesystems, scoped secrets, security headers, resource limits, scans, and SBOMs. |
+
+## Demo video
+
+<!--
+YOUTUBE PLACEHOLDER
+1. Upload the 3–4 minute demonstration to YouTube.
+2. Replace REPLACE_WITH_VIDEO_ID in both links in this README.
+3. Replace docs/assets/demo-thumbnail.png with the final thumbnail.
+-->
+
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=REPLACE_WITH_VIDEO_ID">
+    <img src="docs/assets/demo-thumbnail.png" alt="Watch the Atlas product demonstration" width="820">
+  </a>
+</p>
+
+The recommended demonstration covers authentication, multi-file ingestion, grounded question answering, validated citations, insufficient-context behavior, authorization denials, analytics, and the architecture.
+
+## Product tour
+
+<!--
+Replace every placeholder image below with a real screenshot using the same filename.
+Use one synthetic organization and collection across the full tour.
+-->
+
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="docs/assets/screenshots/02-document-workspace.png" alt="Atlas document workspace and ingestion status"><br>
+      <strong>Document workspace</strong><br>
+      <sub>Multi-file upload, processing state, metadata, versions, reindexing, and deletion.</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="docs/assets/screenshots/03-grounded-answer.png" alt="Atlas grounded answer with validated citations"><br>
+      <strong>Grounded answers</strong><br>
+      <sub>Hybrid retrieval, local reranking, explicit answer status, and numbered citations.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="docs/assets/screenshots/04-source-citations.png" alt="Atlas source citation with document and page information"><br>
+      <strong>Source evidence</strong><br>
+      <sub>Server-resolved document, version, page or section, offsets, and exact excerpt.</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="docs/assets/screenshots/05-role-preview.png" alt="Atlas Owner Admin Editor and Viewer permission preview"><br>
+      <strong>Authorization behavior</strong><br>
+      <sub>Owner, Admin, Editor, and Viewer permissions remain enforced by the backend.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="docs/assets/screenshots/06-analytics-audit.png" alt="Atlas analytics and audit workspace"><br>
+      <strong>Analytics and audit</strong><br>
+      <sub>Operational signals, unanswered questions, ingestion health, and append-only audit export.</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="docs/assets/screenshots/07-mobile-chat.png" alt="Atlas responsive mobile conversation interface"><br>
+      <strong>Responsive conversation UX</strong><br>
+      <sub>Independent scrolling, persistent composer, citations, and long-conversation support.</sub>
+    </td>
+  </tr>
+</table>
+
+## Architecture
+
+Atlas separates document ingestion from question answering. Both paths meet in the authorized PostgreSQL retrieval layer, while citation validation resolves trusted source information independently from the model output.
+
+<p align="center">
+  <img src="docs/assets/atlas-architecture-v2.png" alt="Atlas ingestion, retrieval, answer generation, and citation-validation architecture" width="620">
+</p>
+
+### Pipeline explained
+
+1. **Upload:** An authorized user uploads one or more PDF or DOCX files to a collection.
+2. **Validate and store:** FastAPI streams and validates the files, calculates checksums, uses generated storage keys, and records an observable ingestion job.
+3. **Process asynchronously:** Redis and Celery run deterministic parsing, cleaning, chunking, source-location extraction, and embedding outside the request path.
+4. **Index knowledge:** PostgreSQL stores application state and full-text vectors, while pgvector stores semantic embeddings with an HNSW index.
+5. **Authorize the question:** Every request rechecks the principal, role, tenant, collection, and metadata filters.
+6. **Retrieve and rerank:** Keyword and semantic candidates are fused with RRF, deduplicated, and reranked by the local multilingual cross-encoder.
+7. **Generate:** A bounded set of complete chunks is sent to the OpenAI Responses API using strict structured output, `store=false`, and no external tools.
+8. **Validate citations:** Atlas rejects invented or unauthorized source IDs and resolves valid citations from trusted database rows.
+9. **Return a controlled outcome:** The API returns an answer, insufficient-context response, or conflicting-sources response with exact source evidence.
+10. **Observe:** Authorized conversation state, append-only audit events, text-free metrics, and traces support analytics and recovery.
+
+## Retrieval and answer flow
 
 ```text
-POST   /collections/{collection_id}/documents/{document_id}/versions
-POST   /collections/{collection_id}/documents/{document_id}/reindex
-DELETE /collections/{collection_id}/documents/{document_id}
-GET    /collections/{collection_id}/documents/{document_id}
-GET    /collections/{collection_id}/documents/{document_id}/versions
-GET    /collections/{collection_id}/documents/{document_id}/versions/{version_id}
+Question
+  → authorize tenant, role, collection, and filters
+  → PostgreSQL keyword search + pgvector semantic search
+  → Reciprocal Rank Fusion
+  → local multilingual cross-encoder reranking
+  → bounded citable context
+  → OpenAI strict structured output
+  → independent citation validation
+  → grounded answer or safe refusal
 ```
 
-All original 15 roadmap milestones remain complete. The separately documented
-[post-v1 enterprise upgrade](docs/POST_V1_ENTERPRISE_UPGRADE.md) adds application
-authorization administration, collection access, audit activity, feedback,
-analytics and deterministic onboarding UX without changing the RAG pipeline.
+Raw semantic similarity, full-text rank, RRF, and reranker outputs are ranking values—not probabilities or confidence percentages.
 
-## Prerequisites
+## Security model
 
-- Docker Desktop (or Docker Engine) with Docker Compose v2
-- Optional for running tools outside containers: Python 3.12 and [uv](https://docs.astral.sh/uv/)
+- The configured OIDC provider authenticates users; Atlas does not store company passwords.
+- The backend derives trusted identity and tenant scope from validated tokens and enabled memberships.
+- Cross-tenant resource probes return the same safe not-found behavior used by the application.
+- Tenant, collection, and metadata restrictions execute inside both retrieval branches before ranking and fusion.
+- Browser tokens remain inside an encrypted server-managed session and are not stored in browser JavaScript storage.
+- Uploaded documents are untrusted data and cannot override system instructions or grant authority.
+- The answer model cannot authoritatively choose filenames, pages, document IDs, or offsets.
+- Questions, answers, prompts, source text, vectors, credentials, and raw provider responses are excluded from application logs.
+- Responses API calls explicitly use `store=false`; this is not presented as an organization-level Zero Data Retention guarantee.
+- Production configuration requires HTTPS, complete OIDC settings, strong session configuration, and external secret handling.
 
-## Configure the environment
+## Roles and permissions
 
-Compose has safe local defaults, including a disposable Dockerized OIDC issuer and
-an idempotently seeded Owner workspace. No environment file is required for the
-local showcase. To customize ports, credentials, or the OpenAI key, copy
-`.env.example` to `.env` and edit the copy. Never commit `.env` or production
-credentials. The local identity service is development-only and is not included
-when production is launched with explicit `-f compose.yaml -f compose.prod.yaml`
-files.
+| Capability | Owner | Admin | Editor | Viewer |
+|---|:---:|:---:|:---:|:---:|
+| Search and ask authorized knowledge | ✓ | ✓ | ✓ | ✓ |
+| View permitted documents and citations | ✓ | ✓ | ✓ | ✓ |
+| Upload and manage permitted documents | ✓ | ✓ | ✓ | — |
+| Manage collections | ✓ | ✓ | Limited | — |
+| View operational analytics | ✓ | ✓ | As granted | As granted |
+| Perform destructive workspace operations | ✓ | Limited | — | — |
+| Use the portfolio role preview | ✓ | — | — | — |
 
-If database credentials are changed, update `DATABASE_URL` to match. Inside Compose, its hostname must remain `postgres`.
+The role preview changes effective demonstration permissions without replacing the real owner identity. Audit and analytics records retain the real actor and the effective preview role.
 
-## Start and stop
+## Technology stack
 
-From the repository root:
+| Layer | Technologies |
+|---|---|
+| Frontend | Next.js 16.3.3, React 19.2.8, TypeScript 5.9.3, server-managed BFF session |
+| API | Python 3.12, FastAPI, Pydantic, async SQLAlchemy/asyncpg, Alembic |
+| Database and retrieval | PostgreSQL 17, pgvector 0.8.x, HNSW, `tsvector`/GIN, `websearch_to_tsquery`, RRF |
+| Jobs and storage | Celery, Redis, checksummed object storage, reconciliation and cleanup tombstones |
+| Embeddings | OpenAI `text-embedding-3-small`, 1,536 dimensions |
+| Reranking | Pinned `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` local model |
+| Answer generation | OpenAI Responses API with strict structured output and independently validated citations |
+| Authentication | OIDC/OAuth 2.0 Authorization Code with PKCE, RS256/JWKS, encrypted HttpOnly sessions, CSRF/origin controls |
+| Observability | OpenTelemetry, Prometheus, Tempo, Grafana, structured logs and health checks |
+| Delivery and security | Docker Compose, HTTPS reverse proxy, private networking, Trivy, Syft/CycloneDX, ZAP and Gitleaks |
+
+## Measured verification
+
+| Area | Latest recorded result | Interpretation |
+|---|---:|---|
+| Backend PostgreSQL/pgvector suite | 204 passed | Includes retrieval, authorization, lifecycle, cleanup, migration, and API integration coverage. |
+| Frontend unit suite | 21 passed | Covers interface, session, API, role, and regression behavior. |
+| Desktop/mobile browser workflows | 26 passed, 2 conditionally skipped | The two invitation tests require the separate interactive multi-identity issuer; core deletion, role, chat, and security workflows were not skipped. |
+| Real OIDC role-preview smoke | Passed | Editor and Viewer denials were enforced by the backend. |
+| Real Docker cleanup smoke | Passed | No pending cleanup or orphan derived data remained in the exercised fixture. |
+| Compose services | Healthy | API, frontend, worker, PostgreSQL, Redis, and observability services passed the recorded health verification. |
+
+The repository’s full verification record should remain authoritative. Update this table whenever the release commit or test counts change.
+
+## Download and run Atlas locally
+
+The following guide starts the complete local Atlas stack, including the web application, API, worker, PostgreSQL/pgvector, Redis, and the synthetic development login provider.
+
+### 1. Install the prerequisites
+
+Install:
+
+- [Git](https://git-scm.com/)
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+
+Start Docker Desktop and wait until it reports that Docker is running. Docker should have at least **4 GB of memory** available; **6–8 GB is preferable** because Atlas includes a local reranker model.
+
+Verify the installation in PowerShell or a terminal:
+
+```text
+git --version
+docker --version
+docker compose version
+```
+
+### 2. Clone the repository
+
+Windows PowerShell:
 
 ```powershell
+git clone https://github.com/medalieli/atlas-enterprise-rag-platform.git
+Set-Location atlas-enterprise-rag-platform
+```
+
+macOS/Linux:
+
+```bash
+git clone https://github.com/medalieli/atlas-enterprise-rag-platform.git
+cd atlas-enterprise-rag-platform
+```
+
+### 3. Create the private environment file
+
+Windows PowerShell:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+macOS/Linux:
+
+```bash
+cp .env.example .env
+```
+
+The real `.env` file is intentionally excluded from GitHub.
+
+### 4. Configure the OpenAI key
+
+Open `.env` in a text editor and set:
+
+```dotenv
+OPENAI_API_KEY=your_actual_openai_api_key
+```
+
+Do not add quotation marks unless they are part of the key. Never commit, publish, or share this file.
+
+Atlas can start without an OpenAI key, but document embeddings and generated answers require one. The included local-development values for PostgreSQL, OIDC, and sessions can remain unchanged for ordinary local use.
+
+### 5. Check for port conflicts
+
+| Service | Default host port |
+|---|---:|
+| Frontend | `3000` |
+| API | `8000` |
+| PostgreSQL | `5432` |
+| Local login provider | `9444` |
+
+If a port is already occupied, change its host-side value in `.env`. For example:
+
+```dotenv
+API_PORT=18000
+POSTGRES_PORT=15432
+```
+
+Do not change the internal container hostname in `DATABASE_URL`; it must continue using `postgres:5432`.
+
+### 6. Validate the Docker configuration
+
+From the repository root, run:
+
+```bash
+docker compose config --quiet
+```
+
+No output means the Compose configuration is valid.
+
+### 7. Build and start Atlas
+
+```bash
 docker compose up --build -d
-docker compose ps
 ```
 
-On a clean database, Compose automatically applies Alembic migrations and creates
-the local Owner workspace before the API starts. Open <http://localhost:3000>, choose
-**Sign up**, and the local issuer signs in the synthetic Owner without a password.
-Port `9444` must be available for this browser-only development issuer.
+The first build can take several minutes while Docker downloads or prepares:
 
-Stop services safely while preserving the database volume:
+- base container images;
+- Python and Node.js dependencies;
+- the pinned local reranker model;
+- PostgreSQL with pgvector;
+- Redis.
 
-```powershell
+Compose then automatically:
+
+1. starts PostgreSQL and Redis;
+2. starts the local OIDC login provider;
+3. applies all Alembic migrations;
+4. creates the local Owner account and starter workspace;
+5. starts the API and background worker;
+6. starts the frontend after the API becomes healthy.
+
+No separate migration or database-initialization command is required.
+
+### 8. Check container health
+
+```bash
+docker compose ps -a
+```
+
+The `migrate` and `local-bootstrap` services should show `Exited (0)`. This is expected because they are one-time initialization jobs.
+
+These long-running services should become healthy:
+
+- `frontend`
+- `api`
+- `worker`
+- `postgres`
+- `redis`
+- `local-oidc`
+
+If a service initially reports `health: starting`, wait approximately 30–90 seconds and run `docker compose ps -a` again.
+
+### 9. Open Atlas and sign in
+
+Open [http://localhost:3000](http://localhost:3000), then select **Sign up or Sign in**.
+
+For local development, the included synthetic OIDC provider signs the user into the seeded Owner workspace without requiring a password. The service on port `9444` is a development utility only; a real deployment must use an approved external OIDC provider.
+
+### 10. Upload and use documents
+
+After signing in:
+
+1. Open **Documents**.
+2. Upload one or more PDF or DOCX files.
+3. Wait until processing reports `ready`.
+4. Open **Chat**.
+5. Select the relevant collection.
+6. Ask questions about the uploaded documents.
+7. Open the citations to inspect the exact supporting sources.
+
+An OpenAI API key is required for document embeddings and generated answers.
+
+### Useful local URLs
+
+| Service | URL |
+|---|---|
+| Atlas application | [http://localhost:3000](http://localhost:3000) |
+| API | [http://localhost:8000](http://localhost:8000) |
+| Swagger documentation | [http://localhost:8000/docs](http://localhost:8000/docs) |
+| API readiness | [http://localhost:8000/health/ready](http://localhost:8000/health/ready) |
+| Local OIDC provider | [http://localhost:9444](http://localhost:9444) |
+
+If `API_PORT` was changed, replace `8000` in the API URLs with the configured host port.
+
+### View logs
+
+If something fails:
+
+```bash
+docker compose logs --tail 200 frontend api worker postgres redis local-oidc migrate local-bootstrap
+```
+
+Follow the main application logs continuously:
+
+```bash
+docker compose logs -f frontend api worker
+```
+
+Application logs intentionally avoid document text, questions, answers, credentials, and raw provider responses.
+
+### Restart Atlas
+
+```bash
+docker compose up -d
+```
+
+### Stop Atlas without deleting data
+
+This preserves the database and uploaded documents:
+
+```bash
 docker compose down
 ```
 
-Warning: `docker compose down -v` permanently deletes the local PostgreSQL volume and all data in it.
+### Completely reset local data
 
-## Local endpoints
+> **Destructive operation:** The following command permanently deletes the local database, uploaded documents, and local identity data stored in Docker volumes. Use it only when you intentionally want a clean installation.
 
-- Application information: <http://localhost:8000/>
-- Liveness: <http://localhost:8000/health/live>
-- Database and pgvector readiness: <http://localhost:8000/health/ready>
-- Swagger UI: <http://localhost:8000/docs>
-- Upload: `POST /collections/{collection_id}/documents`
-- Job status: `GET /processing-jobs/{job_id}`
-- Semantic retrieval: `POST /collections/{collection_id}/semantic-search`
-- Keyword retrieval: `POST /collections/{collection_id}/keyword-search`
-- Hybrid retrieval: `POST /collections/{collection_id}/hybrid-search`
-- Reranked retrieval: `POST /collections/{collection_id}/reranked-search`
-- Grounded answers: `POST /collections/{collection_id}/ask`
-- Conversations: `POST /collections/{collection_id}/conversations`
-- Conversation turns: `POST /collections/{collection_id}/conversations/{conversation_id}/messages`
-- Current identity: `GET /auth/me`
-- Authorized document list: `GET /collections/{collection_id}/documents`
-- Authorized immutable source: `GET /collections/{collection_id}/documents/{document_id}/versions/{version_id}/source`
-- List collections: `GET /collections?tenant_id=<TENANT_UUID>`
-- Create collection: `POST /collections`
-
-If `API_PORT` is changed, replace `8000` in these URLs with that port.
-
-## Tests and linting
-
-Run the complete suite, including the database integration test, after Compose is healthy:
-
-```powershell
-Set-Location backend
-uv sync --frozen
-$env:DATABASE_URL = "postgresql+asyncpg://rag_assistant_dev:rag_assistant_dev@localhost:5432/rag_assistant_dev"
-$env:RUN_DATABASE_TESTS = "1"
-uv run pytest
-uv run ruff check .
+```bash
+docker compose down -v
+docker compose up --build -d
 ```
 
-To run unit tests without PostgreSQL, omit `RUN_DATABASE_TESTS`; the database integration test will be reported as skipped.
+For hardened or external deployment, follow [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) instead of using the synthetic local identity provider.
 
-## Database migrations
+## Important API capabilities
 
-Apply all migrations from the repository root after PostgreSQL is healthy:
+The exact OpenAPI document is exposed by FastAPI in configured development environments. Major capabilities include:
 
-```powershell
-docker compose run --rm api uv run alembic upgrade head
-docker compose run --rm api uv run alembic current
-```
+- collection and document management;
+- ingestion-job status;
+- semantic, keyword, hybrid, and reranked search;
+- grounded question answering;
+- conversation creation, pagination, turns, and replay;
+- metadata filters;
+- document replacement, reindexing, and deletion;
+- feedback, analytics, and audit export;
+- liveness and readiness checks.
 
-Alembic reads `DATABASE_URL` through the same typed settings as the application. Inside Compose, the database hostname is `postgres`. Running `upgrade head` repeatedly is safe; already-applied revisions are not executed again.
+All protected endpoints derive identity from the trusted principal. Tenant IDs and authorization roles are not accepted as browser-controlled authority.
 
-For host-side development, run the equivalent commands from `backend` after setting `DATABASE_URL` to the mapped host port. Do not use SQLAlchemy `create_all` for application schema changes.
+## Development path
 
-The [Milestone 3 data-model guide](docs/DATA_MODEL.md) explains the tables, tenant boundaries, delete behavior, and decisions deferred to later milestones.
+<details>
+<summary><strong>View the completed 15-milestone roadmap</strong></summary>
 
-The [Milestone 4 ingestion guide](docs/INGESTION.md) explains upload validation,
-storage, trusted development identity, job states, retries, idempotency, and operational
-commands. Example requests are available through Swagger after configuring a development
-identity and seed records; never send tenant identity in upload input.
+1. Repository foundation and engineering specification
+2. FastAPI, PostgreSQL/pgvector, Docker Compose, and health checks
+3. Tenant-safe relational models and Alembic migrations
+4. Secure PDF/DOCX upload and asynchronous ingestion jobs
+5. Deterministic parsing, cleaning, chunking, and source mapping
+6. OpenAI embeddings and pgvector semantic retrieval
+7. PostgreSQL full-text search and hybrid RRF retrieval
+8. Metadata filtering and local multilingual reranking
+9. Grounded answers and independent citation validation
+10. OIDC authentication, server-managed sessions, RBAC, and tenant isolation
+11. Conversation history, follow-up rewriting, and idempotent replay
+12. Immutable versions, replacement, reindexing, deletion, and recovery
+13. Responsive production-oriented Next.js workspace
+14. Focused evaluation, feedback signals, analytics, and observability
+15. Deployment hardening, scans, SBOMs, load testing, and backup/restore evidence
 
-The [Milestone 5 parsing guide](docs/PARSING.md) documents parser limits, cleaning and
-chunking rules, fingerprints, exact source traceability, and unsupported document features.
+Post-v1 work added multi-file upload, role preview, long-chat behavior, conversation deletion, typed-confirmation collection cleanup, and further analytics/audit refinements.
 
-The [Milestone 6 embedding guide](docs/EMBEDDINGS.md) documents provider configuration,
-batching, fingerprints, atomic ingestion, backfill, vector indexing, semantic search,
-cost/privacy considerations, and limitations.
+</details>
 
-The [Milestone 7 retrieval guide](docs/RETRIEVAL.md) documents PostgreSQL full-text
-representation, keyword search, secured candidate retrieval, Reciprocal Rank Fusion,
-score interpretation, operational migration tradeoffs, and deferred functionality.
+## Known limitations
 
-The [Milestone 8 filtering and reranking guide](docs/RERANKING.md) documents upload
-metadata, shared filter semantics, indexed PostgreSQL predicates, bounded local
-cross-encoder inference, score interpretation, and failure behavior.
+- No public production deployment is currently available.
+- Real company deployment requires a distinct OIDC identity and database membership for every employee; the owner role selector is only a controlled portfolio preview.
+- OCR for scanned or image-only PDFs is not implemented.
+- DOCX citations use section identity and exact excerpts rather than fabricated visual page highlights.
+- Tenant isolation is enforced and integration-tested at the application/query layer; PostgreSQL Row-Level Security is not enabled.
+- Published evaluation numbers come from small synthetic regression fixtures.
+- External content connectors, SCIM provisioning, streaming responses, and action-taking tools are outside the current release.
 
-The [Milestone 9 answer and citation guide](docs/ANSWERS.md) documents bounded
-context construction, the grounding prompt, the Responses API configuration,
-strict output validation, trusted citation resolution, privacy, and safe failures.
+## Documentation
 
-Example grounded request:
+| Document | Purpose |
+|---|---|
+| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Validated local and hardened deployment instructions |
+| [`docs/VERIFICATION.md`](docs/VERIFICATION.md) | Test, evaluation, security, load, failure, and recovery evidence |
+| [`docs/PROJECT_SPEC.md`](docs/PROJECT_SPEC.md) | Product requirements, constraints, and scope |
+| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Completed milestone plan and acceptance criteria |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Components, trust boundaries, data lineage, and technical decisions |
+| [`docs/SECURITY.md`](docs/SECURITY.md) | Threat controls, privacy decisions, and residual risks |
 
-```json
-{
-  "query": "How long do enterprise customers have to request a refund?",
-  "retrieval_count": 8,
-  "filters": {"departments": ["legal"], "document_types": ["policy"]}
-}
-```
+Adjust document links if the repository uses different filenames; do not leave broken links in the public release.
 
-The response status is `answered`, `insufficient_context`, or
-`conflicting_sources`. Factual claims contain numeric markers matching citations
-whose document and source-location fields were resolved by the server.
+## Project status
 
-The [Milestone 10 authentication guide](docs/AUTHENTICATION.md) documents external
-issuer/JWKS setup, strict JWT validation, identity provisioning, roles, collection
-management, tenant isolation, key rotation, TLS and revocation limitations. Business
-requests use `Authorization: Bearer <ACCESS_TOKEN>`; the API validates tokens but
-does not issue them.
+Atlas is a completed portfolio release and a deployment-ready reference implementation. It is not presented as a hosted commercial service or as a guarantee of universal RAG accuracy.
 
-The [Milestone 11 conversation guide](docs/CONVERSATIONS.md) documents PostgreSQL-owned
-history, bounded Luna follow-up rewriting, clarification, idempotent serialized turns,
-and current-turn citation revalidation. The existing stateless `/ask` endpoint remains
-unchanged.
+Recommended next work:
 
-## Troubleshooting
+1. publish a synthetic-data product demonstration;
+2. expand held-out domain evaluation with human review;
+3. add one audited read-only enterprise connector;
+4. configure real enterprise identity/group provisioning for an approved deployment.
 
-## Post-v1 workspace experience
+## Author
 
-Atlas provides OIDC-only login, a responsive enterprise workspace, bounded
-multi-document upload, existing Milestone 12 lifecycle controls, invitation
-editing/removal, and filtered CSV audit export. See the
-[enterprise finishing-pass guide](docs/POST_V1_ENTERPRISE_UPGRADE.md) for role and
-limit details. Invitation links now preserve a short-lived encrypted continuation
-through OIDC login and require the matching verified provider identity. Atlas still
-stores no passwords and ships no default credentials.
+**Mohammed Ali El Idrissi**  
+IT Engineer · RAG and AI Agent Development
 
-If Docker commands are unavailable or report that the daemon is not running, install/start Docker Desktop and verify with `docker --version` and `docker compose version`.
+<!-- Replace the placeholders below before publication. -->
 
-If port 8000 or 5432 is occupied, set a different host port in `.env`, for example `API_PORT=8001` or `POSTGRES_PORT=5433`. Container-to-container ports and the Compose `DATABASE_URL` do not change.
+[LinkedIn](YOUR_LINKEDIN_URL) · [Upwork](YOUR_UPWORK_URL) · [Portfolio](YOUR_PORTFOLIO_URL) · [Demo video](https://www.youtube.com/watch?v=REPLACE_WITH_VIDEO_ID)
 
-Inspect service state and logs with:
+---
 
-```powershell
-docker compose ps
-docker compose logs api postgres
-```
-
-The [project specification](docs/PROJECT_SPEC.md) defines the product, and the [roadmap](docs/ROADMAP.md) tracks later milestones.
+<div align="center">
+  <sub>Built as a production-oriented engineering portfolio project using synthetic demonstration data.</sub>
+</div>
