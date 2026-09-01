@@ -42,6 +42,7 @@ Atlas addresses that complete workflow:
 - retrieve exact identifiers and semantic matches;
 - rerank a bounded candidate set locally;
 - generate answers only from supplied evidence;
+- work with English and French documents and answer in the language used by the employee;
 - independently validate every citation;
 - enforce tenant, collection, and role authorization;
 - preserve conversations, document history, audit events, and operational evidence.
@@ -51,6 +52,7 @@ Atlas addresses that complete workflow:
 | Area | What Atlas provides |
 |---|---|
 | Grounded answers | Explicit `answered`, `insufficient_context`, and `conflicting_sources` outcomes instead of filling evidence gaps with general knowledge. |
+| Multilingual knowledge | Unicode-preserving ingestion, language-neutral lexical search, multilingual embeddings and reranking, and grounded English/French answers that follow the employee's question language. |
 | Validated citations | Model-proposed source IDs are checked and resolved through authorized PostgreSQL records before reaching the user. |
 | Hybrid retrieval | PostgreSQL full-text search and pgvector semantic search, combined with deterministic Reciprocal Rank Fusion. |
 | Local reranking | A pinned multilingual cross-encoder reranks a bounded secured candidate pool. |
@@ -79,7 +81,7 @@ YOUTUBE PLACEHOLDER
   </a>
 </p>
 
-The recommended demonstration covers authentication, multi-file ingestion, grounded question answering, validated citations, insufficient-context behavior, authorization denials, analytics, and the architecture.
+The recommended demonstration covers authentication, multi-file ingestion, grounded English/French question answering, validated citations, insufficient-context behavior, authorization denials, analytics, and the architecture.
 
 ## Product tour
 
@@ -173,6 +175,45 @@ Use one synthetic organization and collection across the full tour.
     </td>
   </tr>
 </table>
+
+## Multilingual knowledge and conversations
+
+Atlas is designed for organizations whose knowledge base contains both English and French material. Multilingual behavior is part of the retrieval and grounding pipeline—not only a translation layer added to the interface.
+
+| Layer | Multilingual behavior |
+|---|---|
+| Document ingestion | PDF and DOCX parsing preserves Unicode text, accents, punctuation, page identity, section paths, and source offsets. |
+| Keyword retrieval | PostgreSQL uses the explicit `simple` text-search configuration. This avoids forcing one language's stemmer onto mixed collections and preserves exact policy names, acronyms, product codes, and enterprise identifiers. |
+| Semantic retrieval | OpenAI embeddings retrieve by meaning, supporting paraphrased English and French questions beyond exact word matching. |
+| Local reranking | The pinned multilingual mMARCO cross-encoder evaluates each secured query–passage pair before final context selection. |
+| Answer generation | The grounding prompt instructs the answer provider to respond in the language of the employee's question while using only the supplied sources. |
+| Follow-up questions | Bounded conversation history and follow-up rewriting preserve the current question's intent and language without weakening authorization. |
+| Citations | Source IDs, document versions, page or section locations, offsets, and excerpts are validated identically in every supported language. |
+| Evaluation | Focused deterministic fixtures include representative English and French documents, questions, paraphrases, distractors, filters, and citation checks. |
+
+<!--
+MULTILINGUAL SCREENSHOT PLACEHOLDER
+Add one full-width screenshot or a clean two-panel composite showing:
+1. an English question with an English grounded answer and citations; and
+2. a French question with a French grounded answer and citations.
+Save it as docs/portfolio/atlas-multilingual-chat.png.
+Use synthetic documents only and hide emails, tokens, private text, and local environment details.
+-->
+
+<p align="center">
+  <img
+    src="docs/portfolio/atlas-multilingual-chat.png"
+    alt="Atlas grounded conversations in English and French with validated citations"
+    width="100%"
+  >
+  <br>
+  <strong>Grounded multilingual conversations</strong>
+  <br>
+  <sub>English and French questions retain the same retrieval, authorization, grounding, and citation-validation guarantees.</sub>
+</p>
+
+> **Scope:** English and French are the languages exercised by the current focused evaluation. The multilingual models may support additional languages, but Atlas does not claim equal quality for languages that have not been evaluated. It also does not silently translate source documents or apply language-specific stemming.
+
 ## Architecture
 
 Atlas separates document ingestion from question answering. Both paths meet in the authorized PostgreSQL retrieval layer, while citation validation resolves trusted source information independently from the model output.
@@ -248,6 +289,7 @@ The role preview changes effective demonstration permissions without replacing t
 | Embeddings | OpenAI `text-embedding-3-small`, 1,536 dimensions |
 | Reranking | Pinned `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` local model |
 | Answer generation | OpenAI Responses API with strict structured output and independently validated citations |
+| Multilingual path | Unicode-preserving parsing, PostgreSQL `simple` full-text search, multilingual embeddings/reranking, and answer-language matching |
 | Authentication | OIDC/OAuth 2.0 Authorization Code with PKCE, RS256/JWKS, encrypted HttpOnly sessions, CSRF/origin controls |
 | Observability | OpenTelemetry, Prometheus, Tempo, Grafana, structured logs and health checks |
 | Delivery and security | Docker Compose, HTTPS reverse proxy, private networking, Trivy, Syft/CycloneDX, ZAP and Gitleaks |
@@ -259,6 +301,7 @@ The role preview changes effective demonstration permissions without replacing t
 | Backend PostgreSQL/pgvector suite | 204 passed | Includes retrieval, authorization, lifecycle, cleanup, migration, and API integration coverage. |
 | Frontend unit suite | 21 passed | Covers interface, session, API, role, and regression behavior. |
 | Desktop/mobile browser workflows | 26 passed, 2 conditionally skipped | The two invitation tests require the separate interactive multi-identity issuer; core deletion, role, chat, and security workflows were not skipped. |
+| Focused multilingual evaluation | 14 deterministic English/French cases passed | A small synthetic regression fixture covering retrieval, answer/refusal behavior, citations, filters, and prompt-injection resistance—not a universal language benchmark. |
 | Real OIDC role-preview smoke | Passed | Editor and Viewer denials were enforced by the backend. |
 | Real Docker cleanup smoke | Passed | No pending cleanup or orphan derived data remained in the exercised fixture. |
 | Compose services | Healthy | API, frontend, worker, PostgreSQL, Redis, and observability services passed the recorded health verification. |
@@ -532,6 +575,7 @@ Post-v1 work added multi-file upload, role preview, long-chat behavior, conversa
 - DOCX citations use section identity and exact excerpts rather than fabricated visual page highlights.
 - Tenant isolation is enforced and integration-tested at the application/query layer; PostgreSQL Row-Level Security is not enabled.
 - Published evaluation numbers come from small synthetic regression fixtures.
+- Multilingual evaluation currently focuses on English and French. Other languages are not presented as equally validated, and PostgreSQL `simple` search deliberately does not provide language-specific stemming.
 - External content connectors, SCIM provisioning, streaming responses, and action-taking tools are outside the current release.
 
 ## Documentation
