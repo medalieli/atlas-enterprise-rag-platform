@@ -202,7 +202,7 @@ Use synthetic documents only and hide emails, tokens, private text, and local en
 
 <p align="center">
   <img
-    src="docs/portfolio/atlas2.png"
+    src="docs/portfolio/atlas9.png"
     alt="Atlas grounded conversations in English and French and Arabic with validated citations"
     width="100%"
   >
