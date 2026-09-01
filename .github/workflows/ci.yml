@@ -23,15 +23,21 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - uses: astral-sh/setup-uv@6b9c6063abd6010835644d4c2e1bef4cf5cd0fca
       - run: cd backend && uv sync --frozen
+      - name: Enable PostgreSQL extensions
+        env:
+          PGPASSWORD: rag_test
+        run: >-
+          psql -h localhost -U rag_test -d rag_test -v ON_ERROR_STOP=1
+          -c 'CREATE EXTENSION IF NOT EXISTS vector;'
+      - run: cd backend && uv run alembic upgrade head && uv run alembic current && uv run alembic check
       - run: cd backend && uv run ruff check . && uv run python -m compileall -q app tests
       - run: cd backend && uv run pytest
-      - run: cd backend && uv run alembic upgrade head && uv run alembic current && uv run alembic check
       - run: cd backend && uv run python scripts/run_evaluation.py
   frontend:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-      - uses: actions/setup-node@1e60f620b9541dca1515400b3102c0b8cee4dff6
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with: {node-version: 22.22.2, cache: npm, cache-dependency-path: frontend/package-lock.json}
       - run: cd frontend && npm ci
       - run: cd frontend && npm run lint && npm run typecheck && npm test && npm run build
