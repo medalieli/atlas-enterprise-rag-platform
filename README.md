@@ -29,7 +29,7 @@ Recommended: 1600 × 900, synthetic data only, no emails, tokens, local paths, o
 -->
 
 <p align="center">
-  <img src="docs/portfolio/pipeline.png" alt="Atlas enterprise knowledge workspace overview" width="900">
+  <img src="docs/portfolio/pipeline.png" alt="Atlas enterprise knowledge workspace overview" width="400">
 </p>
 
 ## Why Atlas
