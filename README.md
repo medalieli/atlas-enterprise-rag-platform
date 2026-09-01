@@ -88,45 +88,91 @@ Replace every placeholder image below with a real screenshot using the same file
 Use one synthetic organization and collection across the full tour.
 -->
 
-<table>
+<table width="100%">
   <tr>
-    <td width="50%" align="center">
-      <img src="docs/portfolio/Atlas1.png" alt="Atlas document workspace and ingestion status"><br>
-      <strong>Document workspace</strong><br>
+    <td align="center">
+      <img
+        src="docs/portfolio/Atlas1.png"
+        alt="Atlas document workspace and ingestion status"
+        width="100%"
+      >
+      <br>
+      <strong>Document workspace</strong>
+      <br>
       <sub>Multi-file upload, processing state, metadata, versions, reindexing, and deletion.</sub>
     </td>
-    <td width="50%" align="center">
-      <img src="docs/portfolio/atlas3.png" alt="Atlas grounded answer with validated citations"><br>
-      <strong>Grounded answers</strong><br>
+  </tr>
+
+  <tr>
+    <td align="center">
+      <img
+        src="docs/portfolio/atlas3.png"
+        alt="Atlas grounded answer with validated citations"
+        width="100%"
+      >
+      <br>
+      <strong>Grounded answers</strong>
+      <br>
       <sub>Hybrid retrieval, local reranking, explicit answer status, and numbered citations.</sub>
     </td>
   </tr>
+
   <tr>
-    <td width="50%" align="center">
-      <img src="docs/portfolio/atlas2.png" alt="Atlas source citation with document and page information"><br>
-      <strong>Source evidence</strong><br>
+    <td align="center">
+      <img
+        src="docs/portfolio/atlas2.png"
+        alt="Atlas source citation with document and page information"
+        width="100%"
+      >
+      <br>
+      <strong>Source evidence</strong>
+      <br>
       <sub>Server-resolved document, version, page or section, offsets, and exact excerpt.</sub>
     </td>
-    <td width="50%" align="center">
-      <img src="docs/portfolio/atlas4.png" alt="Atlas Owner Admin Editor and Viewer permission preview"><br>
-      <strong>Authorization behavior</strong><br>
+  </tr>
+
+  <tr>
+    <td align="center">
+      <img
+        src="docs/portfolio/atlas4.png"
+        alt="Atlas role authorization behavior"
+        width="100%"
+      >
+      <br>
+      <strong>Authorization behavior</strong>
+      <br>
       <sub>Owner, Admin, Editor, and Viewer permissions remain enforced by the backend.</sub>
     </td>
   </tr>
+
   <tr>
-    <td width="50%" align="center">
-      <img src="docs/assets/screenshots/06-analytics-audit.png" alt="Atlas analytics and audit workspace"><br>
-      <strong>Analytics and audit</strong><br>
+    <td align="center">
+      <img
+        src="docs/assets/screenshots/06-analytics-audit.png"
+        alt="Atlas analytics and audit workspace"
+        width="100%"
+      >
+      <br>
+      <strong>Analytics and audit</strong>
+      <br>
       <sub>Operational signals, unanswered questions, ingestion health, and append-only audit export.</sub>
     </td>
-    <td width="50%" align="center">
-      <img src="docs/assets/screenshots/07-mobile-chat.png" alt="Atlas responsive mobile conversation interface"><br>
-      <strong>Responsive conversation UX</strong><br>
+  </tr>
+
+  <tr>
+    <td align="center">
+      <img
+        src="docs/assets/screenshots/07-mobile-chat.png"
+        alt="Atlas responsive mobile conversation interface"
+        width="360"
+      >
+      <br>
+      <strong>Responsive conversation UX</strong>
+      <br>
       <sub>Independent scrolling, persistent composer, citations, and long-conversation support.</sub>
     </td>
   </tr>
 </table>
-
 ## Architecture
 
 Atlas separates document ingestion from question answering. Both paths meet in the authorized PostgreSQL retrieval layer, while citation validation resolves trusted source information independently from the model output.
