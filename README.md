@@ -77,10 +77,9 @@ YOUTUBE PLACEHOLDER
 
 <p align="center">
   <a href="https://www.youtube.com/watch?v=phiGWeTivwc">
-    <img src="docs/portfolio/atlas3.png" alt="Watch the Atlas product demonstration" width="350">
+    <strong style="font-size: 22px;">▶ Watch Video Demo</strong>
   </a>
 </p>
-
 The recommended demonstration covers authentication, multi-file ingestion, grounded English/French question answering, validated citations, insufficient-context behavior, authorization denials, analytics, and the architecture.
 
 ## Product tour
