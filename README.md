@@ -29,7 +29,7 @@ Recommended: 1600 × 900, synthetic data only, no emails, tokens, local paths, o
 -->
 
 <p align="center">
-  <img src="docs/portfolio/atlas8.png" alt="Atlas enterprise knowledge workspace overview" width="400">
+  <img src="docs/portfolio/atlas8.png" alt="Atlas enterprise knowledge workspace overview" width="900">
 </p>
 
 ## Why Atlas
@@ -150,7 +150,7 @@ Use one synthetic organization and collection across the full tour.
   <tr>
     <td align="center">
       <img
-        src="docs/assets/screenshots/06-analytics-audit.png"
+        src="docs/portfolio/atlas5.png"
         alt="Atlas analytics and audit workspace"
         width="100%"
       >
@@ -164,7 +164,7 @@ Use one synthetic organization and collection across the full tour.
   <tr>
     <td align="center">
       <img
-        src="docs/portfolio/atlas7.png"
+        src="docs/portfolio/atlas10.png"
         alt="Atlas responsive mobile conversation interface"
         width="360"
       >
@@ -219,7 +219,7 @@ Use synthetic documents only and hide emails, tokens, private text, and local en
 Atlas separates document ingestion from question answering. Both paths meet in the authorized PostgreSQL retrieval layer, while citation validation resolves trusted source information independently from the model output.
 
 <p align="center">
-  <img src="docs/portfolio/pipeline.png" alt="Atlas ingestion, retrieval, answer generation, and citation-validation architecture" width="620">
+  <img src="docs/portfolio/pipeline.png" alt="Atlas ingestion, retrieval, answer generation, and citation-validation architecture" width="350">
 </p>
 
 ### Pipeline explained
