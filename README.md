@@ -76,7 +76,7 @@ YOUTUBE PLACEHOLDER
 -->
 
 <p align="center">
-  <a href="https://www.youtube.com/watch?v=REPLACE_WITH_VIDEO_ID">
+  <a href="https://www.youtube.com/watch?v=phiGWeTivwc">
     <img src="docs/assets/demo-thumbnail.png" alt="Watch the Atlas product demonstration" width="820">
   </a>
 </p>
