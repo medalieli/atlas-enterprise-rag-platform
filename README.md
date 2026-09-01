@@ -20,7 +20,7 @@ Ask questions across controlled PDF and DOCX knowledge and receive grounded answ
 
 </div>
 
-> **Project status:** All 15 roadmap milestones are complete. Atlas is deployment-ready and documented, but it is not currently available at a public production URL. Published evaluation results come from controlled synthetic fixtures and are not universal accuracy claims.
+> **Project status:** Atlas is deployment-ready and documented, but it is not currently available at a public production URL. Published evaluation results come from controlled synthetic fixtures and are not universal accuracy claims.
 
 <!--
 SCREENSHOT PLACEHOLDER
