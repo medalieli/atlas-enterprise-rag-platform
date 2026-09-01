@@ -460,8 +460,9 @@ async def create_message(
         )
         + 1
     )
+    turn_id = uuid4()
     turn = ConversationTurn(
-        id=uuid4(),
+        id=turn_id,
         tenant_id=tenant_id,
         collection_id=collection_id,
         conversation_id=conversation_id,
@@ -683,7 +684,10 @@ async def create_message(
             "Conversation turn failed category=%s",
             getattr(exc, "category", type(exc).__name__),
         )
-        failed = await session.get(ConversationTurn, turn.id)
+        # Rollback expires ORM instances. Keep and use the plain UUID captured before
+        # the transaction so failure cleanup cannot itself trigger an expired-object
+        # database load and leave the conversation permanently locked as pending.
+        failed = await session.get(ConversationTurn, turn_id)
         if failed is not None:
             failed.status = ConversationTurnStatus.FAILED
             failed.failure_category = getattr(exc, "category", type(exc).__name__)[:100]
