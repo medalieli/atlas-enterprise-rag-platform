@@ -22,7 +22,10 @@ blocks include a source ID, safe filename, readable page/section and exact chunk
 text. Uploaded content is explicitly untrusted data: commands inside documents
 cannot override the grounding instruction. Included/excluded counts are observable,
 but text is never logged. No candidates means an immediate `insufficient_context`
-response and no generation call.
+response and no generation call. The same safe path is used when selected evidence
+has no meaningful lexical support for the question or when a question explicitly
+requires live/external data such as current market prices, weather, exchange rates
+or news.
 
 ## Generation provider
 
@@ -60,7 +63,11 @@ snapshot/version, source unit, exact text, page/section and offsets still match 
 context. The model never supplies authoritative UUIDs, filenames or source locations.
 Citation numbers are assigned in first-use order, claim markers such as `[1]` are
 rendered by the server, and response citations contain only allowed metadata and the
-exact bounded chunk. Invalid output is never partially displayed.
+exact bounded chunk. Invalid output is never partially displayed. A validation
+failure receives one bounded fresh generation attempt. If the second result remains
+unsafe, Atlas completes the turn with `insufficient_context`; it never exposes an
+invented citation or converts a recoverable formatting failure into a duplicate
+conversation question.
 
 In the current schema, each `documents` row is the immutable uploaded snapshot and
 therefore serves as the document-version identity; `document_version_id` equals that
@@ -74,6 +81,13 @@ source text, prompts, metadata values, vectors, secrets, headers and raw provide
 responses. API readiness warms only the local reranker and performs no billed call.
 Authorization always comes from the trusted principal; request filters cannot set
 tenant or collection scope.
+
+Query embeddings use a 256-entry in-process LRU keyed by provider instance,
+configured model, dimensions and exact normalized query. The cache contains vectors
+only, is not shared between processes or tenants, and does not weaken collection
+authorization, which is re-evaluated for every database retrieval. Bounded metrics
+distinguish cache hits/misses, identifier matching/preservation, reranker fallback
+and safe refusal reasons without recording query or document text.
 
 ## Deferred work
 

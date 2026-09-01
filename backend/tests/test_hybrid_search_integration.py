@@ -144,7 +144,9 @@ class IntegrationFakeAnswerGenerator:
     async def generate(self, query: str, context: object) -> GenerationResult:
         self.calls += 1
         sources = context.sources  # type: ignore[attr-defined]
-        if self.mode == "invented":
+        if self.mode == "invented" or (
+            self.mode == "invented_once" and self.calls == 1
+        ):
             output = GeneratedAnswer(
                 status=AnswerStatus.ANSWERED,
                 claims=[GeneratedClaim(text="Unsafe", source_ids=["src_invented"])],
@@ -486,7 +488,7 @@ async def test_metadata_filters_apply_identically_before_all_retrieval_modes() -
                 results = response.json()["results"]
                 assert results
                 assert {item["document_id"] for item in results} == {str(both_id)}
-            assert provider.calls == 3
+            assert provider.calls == 1
             too_many = await client.post(
                 f"/collections/{collection_id}/reranked-search",
                 json={"query": "refund", "top_k": 31},
@@ -572,7 +574,34 @@ async def test_ask_resolves_citations_and_skips_empty_context() -> None:
         await _cleanup(principal.tenant_id, other_tenant_id, principal.user_id)
 
 
-async def test_ask_rejects_invented_sources_and_preserves_404() -> None:
+async def test_ask_retries_invalid_citations_then_returns_grounded_answer() -> None:
+    principal, collection_id, _, other_tenant_id, _ = await seed_hybrid()
+    generator = IntegrationFakeAnswerGenerator("invented_once")
+
+    async def principal_override() -> TrustedPrincipal:
+        return principal
+
+    app.dependency_overrides[get_trusted_principal] = principal_override
+    app.dependency_overrides[get_embedding_provider] = CountingQueryProvider
+    app.dependency_overrides[get_reranker_dependency] = IntegrationFakeReranker
+    app.dependency_overrides[get_answer_generator_dependency] = lambda: generator
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                f"/collections/{collection_id}/ask",
+                json={"query": "refund", "retrieval_count": 3},
+            )
+            assert response.status_code == 200, response.text
+            assert response.json()["status"] == "answered"
+            assert generator.calls == 2
+    finally:
+        app.dependency_overrides.clear()
+        await _cleanup(principal.tenant_id, other_tenant_id, principal.user_id)
+
+
+async def test_ask_safely_falls_back_after_repeated_invalid_citations() -> None:
     principal, collection_id, _, other_tenant_id, _ = await seed_hybrid()
     generator = IntegrationFakeAnswerGenerator("invented")
 
@@ -591,10 +620,10 @@ async def test_ask_rejects_invented_sources_and_preserves_404() -> None:
                 f"/collections/{collection_id}/ask",
                 json={"query": "refund", "retrieval_count": 3},
             )
-            assert invalid.status_code == 503
-            assert invalid.json() == {
-                "detail": "Grounded answer could not be generated"
-            }
+            assert invalid.status_code == 200, invalid.text
+            assert invalid.json()["status"] == "insufficient_context"
+            assert invalid.json()["citations"] == []
+            assert generator.calls == 2
             unauthorized = await client.post(
                 f"/collections/{uuid4()}/ask",
                 json={"query": "refund", "retrieval_count": 3},

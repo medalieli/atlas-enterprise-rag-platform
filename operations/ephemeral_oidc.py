@@ -17,6 +17,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 import jwt
 from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 
 def b64url(value: bytes) -> str:
@@ -190,10 +191,13 @@ class Issuer(BaseHTTPRequestHandler):
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--cert", type=Path, required=True)
-    parser.add_argument("--key", type=Path, required=True)
-    parser.add_argument("--signing-key", type=Path, required=True)
-    parser.add_argument("--client-secret-file", type=Path, required=True)
+    parser.add_argument("--cert", type=Path)
+    parser.add_argument("--key", type=Path)
+    parser.add_argument("--signing-key", type=Path)
+    parser.add_argument("--generate-signing-key", action="store_true")
+    parser.add_argument("--client-secret-file", type=Path)
+    parser.add_argument("--client-secret")
+    parser.add_argument("--issuer")
     parser.add_argument("--port", type=int, default=9444)
     parser.add_argument("--bind", default="127.0.0.1")
     parser.add_argument("--insecure-http", action="store_true")
@@ -201,20 +205,43 @@ def main() -> None:
     parser.add_argument("--email", default="atlas-admin@example.test")
     parser.add_argument("--interactive-identities", action="store_true")
     parser.add_argument("--redirect-uri", default="https://localhost/api/auth/callback")
+    parser.add_argument("--allow-container-bind", action="store_true")
     args = parser.parse_args()
-    if args.bind not in {"127.0.0.1", "::1", "localhost"}:
+    if args.bind not in {"127.0.0.1", "::1", "localhost"} and not (
+        args.allow_container_bind and args.insecure_http
+    ):
         parser.error("the synthetic issuer must bind to a loopback address")
-    private_key = serialization.load_pem_private_key(
-        args.signing_key.read_bytes(), password=None
-    )
+    if args.signing_key and args.signing_key.exists():
+        private_key = serialization.load_pem_private_key(
+            args.signing_key.read_bytes(), password=None
+        )
+    elif args.generate_signing_key:
+        private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        if args.signing_key:
+            args.signing_key.parent.mkdir(parents=True, exist_ok=True)
+            args.signing_key.write_bytes(
+                private_key.private_bytes(
+                    serialization.Encoding.PEM,
+                    serialization.PrivateFormat.PKCS8,
+                    serialization.NoEncryption(),
+                )
+            )
+    else:
+        parser.error("provide --signing-key or --generate-signing-key")
+    if args.client_secret is not None:
+        client_secret = args.client_secret
+    elif args.client_secret_file:
+        client_secret = args.client_secret_file.read_text().strip()
+    else:
+        parser.error("provide --client-secret or --client-secret-file")
     public = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(private_key.public_key()))
     public.update({"kid": "m15", "alg": "RS256", "use": "sig"})
     Issuer.private_key = private_key
     Issuer.jwks = {"keys": [public]}
     scheme = "http" if args.insecure_http else "https"
-    Issuer.issuer = f"{scheme}://host.docker.internal:{args.port}"
+    Issuer.issuer = args.issuer or f"{scheme}://host.docker.internal:{args.port}"
     Issuer.client_id = "m15-local-client"
-    Issuer.client_secret = args.client_secret_file.read_text().strip()
+    Issuer.client_secret = client_secret
     Issuer.redirect_uri = args.redirect_uri
     Issuer.subject = args.subject
     Issuer.email = args.email.strip().lower()
@@ -225,6 +252,8 @@ def main() -> None:
     Issuer.interactive_identities = args.interactive_identities
     server = ThreadingHTTPServer((args.bind, args.port), Issuer)
     if not args.insecure_http:
+        if not args.cert or not args.key:
+            parser.error("HTTPS mode requires --cert and --key")
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(args.cert, args.key)
         server.socket = context.wrap_socket(server.socket, server_side=True)

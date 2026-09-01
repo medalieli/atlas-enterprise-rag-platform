@@ -10,7 +10,7 @@ const json = (route: Route, value: unknown, status = 200) =>
     contentType: "application/json",
     body: JSON.stringify(value),
   });
-async function mock(page: Page) {
+async function mock(page: Page, positiveFeedbackRate: number | null = 1) {
   await page.route("**/api/auth/csrf", (r) => json(r, { token: "csrf" }));
   await page.route("**/api/backend/**", (route) => {
     const url = new URL(route.request().url()),
@@ -101,7 +101,7 @@ async function mock(page: Page) {
         answer_statuses: { answered: 4 },
         positive_feedback: 1,
         negative_feedback: 0,
-        positive_feedback_rate: 1,
+        positive_feedback_rate: positiveFeedbackRate,
         ingestion_failures: 0,
         median_response_ms: 120,
         p95_response_ms: 240,
@@ -116,7 +116,7 @@ test("owner administers members, invitations, audit and analytics accessibly", a
   await mock(page);
   await page.goto("/admin/members");
   await expect(
-    page.getByRole("heading", { name: "Organization members" }),
+    page.getByRole("heading", { name: "People" }),
   ).toBeVisible();
   await page.getByLabel("Member").selectOption(member);
   await page.locator(".admin-form select").nth(1).selectOption(collection);
@@ -131,14 +131,23 @@ test("owner administers members, invitations, audit and analytics accessibly", a
   );
   await page.screenshot({ path: `qa/invitations-${testInfo.project.name}.png`, fullPage: true });
   await page.goto("/admin/audit");
-  await expect(page.getByText("collection_grant.changed")).toBeVisible();
+  await expect(page.getByText("Collection Grant Changed")).toBeVisible();
   await page.screenshot({ path: `qa/audit-${testInfo.project.name}.png`, fullPage: true });
   await page.goto("/admin/analytics");
   await expect(page.getByText("Active users")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Answer latency" })).toBeVisible();
   await expect(page.getByText("0.1s", { exact: true })).toBeVisible();
   await expect(page.getByText("0.2s", { exact: true })).toBeVisible();
-  await expect(page.getByText(/Positive feedback rate|Unavailable/)).toHaveCount(0);
+  await expect(page.getByText("Positive feedback rate: 100%", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Unavailable/)).toHaveCount(0);
   await page.screenshot({ path: `qa/analytics-${testInfo.project.name}.png`, fullPage: true });
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+});
+
+test("analytics reports unavailable when no feedback data exists", async ({ page }) => {
+  await mock(page, null);
+  await page.goto("/admin/analytics");
+  await expect(
+    page.getByText("Positive feedback rate: Unavailable", { exact: true }),
+  ).toBeVisible();
 });

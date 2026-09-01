@@ -27,6 +27,7 @@ RUN apk add --no-cache \
     && addgroup --system --gid 1001 nodejs && adduser --system --uid 1001 nextjs
 COPY --from=build --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=build --chown=nextjs:nodejs /app/.next/static ./.next/static
+COPY --from=build --chown=nextjs:nodejs /app/public ./public
 COPY --chown=nextjs:nodejs docker-entrypoint.sh /usr/local/bin/docker-entrypoint
 RUN chmod 0555 /usr/local/bin/docker-entrypoint
 USER nextjs

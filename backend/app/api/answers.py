@@ -1,4 +1,5 @@
 import logging
+import re
 from time import perf_counter
 from typing import Annotated
 from uuid import UUID
@@ -40,13 +41,23 @@ from app.observability import (
     PROVIDER_REQUESTS,
     PROVIDER_TOKENS,
     RETRIEVAL_DURATION,
+    RETRIEVAL_QUALITY,
     configured_model_label,
     request_id_var,
     stage,
 )
-from app.reranking import RerankerError, RerankerProvider, rerank_hybrid_candidates
+from app.reranking import (
+    RerankerError,
+    RerankerProvider,
+    hybrid_fallback,
+    rerank_hybrid_candidates,
+    select_answer_candidates,
+)
 from app.retrieval import (
     candidate_depth,
+    extract_query_identifiers,
+    identifier_candidates,
+    inject_identifier_candidates,
     keyword_candidates,
     reciprocal_rank_fusion,
     semantic_candidates,
@@ -158,6 +169,61 @@ def _empty_generation(settings_model: str, query: str) -> GenerationResult:
     )
 
 
+_EXTERNAL_CURRENT_PATTERN = re.compile(
+    r"\b(?:today|yesterday|current|currently|latest|live|right now|"
+    r"stock price|share price|weather|exchange rate|news)\b",
+    re.IGNORECASE,
+)
+_UNSAFE_ASSISTANT_REQUEST_PATTERN = re.compile(
+    r"(?:ignore\s+(?:all\s+)?(?:previous|prior)\s+instructions|"
+    r"reveal\s+(?:your\s+)?(?:system\s+prompt|api\s+key)|"
+    r"invent\s+(?:a\s+)?(?:source|citation)|"
+    r"bypass\s+(?:access\s+)?controls?|"
+    r"(?:other|another)\s+tenants?'?\s+(?:confidential\s+)?data|"
+    r"treat\s+.*instructions?\s+inside\s+.*documents?\s+as\s+system)",
+    re.IGNORECASE,
+)
+_RELEVANCE_STOPWORDS = frozenset(
+    {
+        "about", "according", "atlas", "could", "does", "each", "from",
+        "give", "have", "include", "into", "northstar", "policy", "real",
+        "requirement", "requirements", "state", "summarize", "summary", "that",
+        "their", "then", "this", "what", "when", "where", "which", "with",
+        "would", "your",
+    }
+)
+
+
+def _has_meaningful_evidence(query: str, passages: list[str]) -> bool:
+    if extract_query_identifiers(query):
+        return True
+    terms = {
+        token.casefold()
+        for token in re.findall(
+            r"[^\W\d_][^\W_]{2,}", query.replace("-", " "), re.UNICODE
+        )
+        if token.casefold() not in _RELEVANCE_STOPWORDS
+    }
+    if not terms:
+        return False
+    evidence = " ".join(passages).casefold().replace("-", " ")
+    return any(term in evidence for term in terms)
+
+
+def _requires_external_current_data(query: str) -> bool:
+    return bool(_EXTERNAL_CURRENT_PATTERN.search(query))
+
+
+def _requires_safe_refusal(query: str) -> bool:
+    """Reject explicit attempts to override grounding or authorization boundaries."""
+    return bool(_UNSAFE_ASSISTANT_REQUEST_PATTERN.search(query))
+
+
+def _normalized_retrieval_query(query: str) -> str:
+    """Normalize punctuation that changes search semantics without altering IDs."""
+    return re.sub(r"(?<=[^\W\d_])[-‐‑–—](?=[^\W\d_])", " ", query)
+
+
 @router.post(
     "/collections/{collection_id}/ask",
     response_model=AskResponse,
@@ -182,7 +248,8 @@ async def ask(
         )
     started = perf_counter()
     tenant_id = await authorize_collection(session, principal, collection_id)
-    vector = await _embed_query(embedding_provider, request.query)
+    retrieval_query = _normalized_retrieval_query(request.query)
+    vector = await _embed_query(embedding_provider, retrieval_query)
     depth = candidate_depth(settings.reranker_candidate_limit)
     with stage("retrieval.semantic.candidates", {"rag.mode": "semantic"}):
         semantic = await semantic_candidates(
@@ -199,26 +266,58 @@ async def ask(
             session,
             tenant_id,
             collection_id,
-            request.query,
+            retrieval_query,
             depth,
             request.filters,
-        )
+    )
+    exact = await identifier_candidates(
+        session, tenant_id, collection_id, retrieval_query, request.filters
+    )
     with stage("retrieval.hybrid.fusion", {"rag.mode": "hybrid"}):
-        fused = reciprocal_rank_fusion(
-            semantic, keyword, settings.reranker_candidate_limit
+        fused = inject_identifier_candidates(
+            reciprocal_rank_fusion(
+                semantic, keyword, settings.reranker_candidate_limit
+            ),
+            exact,
+            settings.reranker_candidate_limit,
         )
+    RETRIEVAL_QUALITY.labels(
+        "identifier", "matched" if exact else "absent"
+    ).inc()
     try:
         with stage("retrieval.rerank", {"rag.mode": "reranked"}):
-            reranked = await rerank_hybrid_candidates(
-                request.query,
+            fully_ranked = await rerank_hybrid_candidates(
+                retrieval_query,
                 fused,
-                request.retrieval_count,
+                len(fused),
                 reranker,
                 settings.reranker_timeout_seconds,
             )
-    except RerankerError as exc:
-        raise HTTPException(status_code=503, detail="Reranker unavailable") from exc
+    except RerankerError:
+        RETRIEVAL_QUALITY.labels("reranker", "fallback").inc()
+        logger.warning("Reranker unavailable; using fused retrieval order")
+        fully_ranked = hybrid_fallback(fused)
+    reranked = select_answer_candidates(
+        retrieval_query, fully_ranked, request.retrieval_count
+    )
+    if exact:
+        RETRIEVAL_QUALITY.labels("identifier", "preserved").inc()
     context = build_answer_context(reranked, tenant_id, collection_id, settings)
+    evidence_supported = _has_meaningful_evidence(
+        retrieval_query, [source.content for source in context.sources]
+    )
+    if (
+        _requires_external_current_data(request.query)
+        or _requires_safe_refusal(request.query)
+        or not evidence_supported
+    ):
+        reason = (
+            "external_current" if _requires_external_current_data(request.query)
+            else "unsafe_request" if _requires_safe_refusal(request.query)
+            else "low_relevance"
+        )
+        RETRIEVAL_QUALITY.labels("refusal", reason).inc()
+        context = build_answer_context([], tenant_id, collection_id, settings)
     retrieval_ms = (perf_counter() - started) * 1_000
     generation_started = perf_counter()
     generation_question = original_question or request.query
@@ -228,31 +327,63 @@ async def ask(
             f"Validated standalone retrieval interpretation:\n{request.query}"
         )
     try:
-        with stage("answer.generate", {"rag.operation": "answer"}):
-            generated = (
-                _empty_generation(
+        validation_attempts = 2 if context.sources and answer_generator else 1
+        for validation_attempt in range(validation_attempts):
+            with stage("answer.generate", {"rag.operation": "answer"}):
+                generated = (
+                    _empty_generation(
+                        settings.answer_model, original_question or request.query
+                    )
+                    if not context.sources
+                    else await generate_bounded(
+                        answer_generator,
+                        generation_question,
+                        context,
+                        settings.answer_provider_timeout_seconds,
+                    )
+                    if answer_generator is not None
+                    else _raise_answer_provider_unavailable()
+                )
+            try:
+                validate_usage(generated.usage)
+                with stage(
+                    "answer.citations.validate", {"rag.operation": "answer"}
+                ):
+                    validated = await validate_and_resolve_answer(
+                        session,
+                        generated.answer,
+                        context,
+                        tenant_id,
+                        collection_id,
+                        settings,
+                    )
+                break
+            except AnswerValidationError as exc:
+                CITATION_FAILURES.labels("validation").inc()
+                if validation_attempt + 1 < validation_attempts:
+                    logger.warning(
+                        "Answer validation retry correlation_id=%s reason=%s",
+                        request_id_var.get(),
+                        str(exc),
+                    )
+                    continue
+                logger.warning(
+                    "Answer validation fallback correlation_id=%s reason=%s",
+                    request_id_var.get(),
+                    str(exc),
+                )
+                generated = _empty_generation(
                     settings.answer_model, original_question or request.query
                 )
-                if not context.sources
-                else await generate_bounded(
-                    answer_generator,
-                    generation_question,
+                validated = await validate_and_resolve_answer(
+                    session,
+                    generated.answer,
                     context,
-                    settings.answer_provider_timeout_seconds,
+                    tenant_id,
+                    collection_id,
+                    settings,
                 )
-                if answer_generator is not None
-                else _raise_answer_provider_unavailable()
-            )
-        validate_usage(generated.usage)
-        with stage("answer.citations.validate", {"rag.operation": "answer"}):
-            validated = await validate_and_resolve_answer(
-                session,
-                generated.answer,
-                context,
-                tenant_id,
-                collection_id,
-                settings,
-            )
+                break
     except (AnswerGenerationError, AnswerValidationError) as exc:
         category = (
             "provider" if isinstance(exc, AnswerGenerationError) else "validation"
@@ -260,8 +391,6 @@ async def ask(
         PROVIDER_REQUESTS.labels(
             "answer", "openai", get_settings().answer_model, category
         ).inc()
-        if isinstance(exc, AnswerValidationError):
-            CITATION_FAILURES.labels("validation").inc()
         logger.warning(
             "Answer request failed correlation_id=%s category=%s",
             request_id_var.get(),

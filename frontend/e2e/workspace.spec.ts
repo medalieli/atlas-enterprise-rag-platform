@@ -14,6 +14,7 @@ const json = (route: Route, value: unknown, status = 200) =>
     body: JSON.stringify(value),
   });
 async function mock(page: Page, role = "admin", transientAuthFailures = 0) {
+  let documentDeleted = false;
   await page.route("**/api/auth/csrf", (r) => json(r, { token: "csrf" }));
   await page.route("**/api/auth/logout", (r) => json(r, { ok: true }));
   await page.route("**/api/backend/**", async (route) => {
@@ -60,7 +61,7 @@ async function mock(page: Page, role = "admin", transientAuthFailures = 0) {
     if (p === "/collections/20000000-0000-0000-0000-000000000002/conversations" && method === "GET")
       return json(route, { conversations: [], next_cursor: null });
     if (p === `/collections/${ids.collection}/documents` && method === "GET")
-      return json(route, [
+      return json(route, documentDeleted ? [] : [
         {
           id: ids.document,
           collection_id: ids.collection,
@@ -75,6 +76,10 @@ async function mock(page: Page, role = "admin", transientAuthFailures = 0) {
           updated_at: new Date().toISOString(),
         },
       ]);
+    if (p === `/collections/${ids.collection}/documents/${ids.document}` && method === "DELETE") {
+      documentDeleted = true;
+      return json(route, { document_id: ids.document, job_id: "delete-job", processing_status: "queued" }, 202);
+    }
     if (p.endsWith("/versions") && method === "GET")
       return json(route, [
         {
@@ -186,7 +191,7 @@ test("document lifecycle, permissions, mobile navigation and accessibility", asy
   await mock(page);
   await page.goto("/documents");
   await expect(
-    page.getByRole("heading", { name: "Documents", exact: true }),
+    page.getByRole("heading", { name: "Knowledge", exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "View details" }).click();
   const details = page.getByRole("dialog");
@@ -196,8 +201,12 @@ test("document lifecycle, permissions, mobile navigation and accessibility", asy
   await details.getByRole("button", { name: "Delete" }).click();
   await page.screenshot({ path: `qa/document-delete-${testInfo.project.name}.png`, fullPage: true });
   await page.getByRole("dialog").last().getByRole("button", { name: "Cancel" }).click();
-  await details.getByRole("button", { name: "Close dialog" }).click();
-  await page.getByRole("button", { name: /Upload document/ }).click();
+  await details.getByRole("button", { name: "Delete" }).click();
+  const confirmation = page.getByRole("dialog").last();
+  await confirmation.getByLabel("Type DELETE to confirm").fill("DELETE");
+  await confirmation.getByRole("button", { name: "Delete document" }).click();
+  await expect(page.getByText("Incident Response Handbook.pdf")).toHaveCount(0);
+  await page.getByRole("button", { name: "＋ Upload document", exact: true }).click();
   await page.getByLabel("PDF or DOCX").setInputFiles({
     name: "policy.pdf",
     mimeType: "application/pdf",
@@ -263,21 +272,19 @@ test("workspace dashboard summarizes the current collection", async ({ page }, t
 test("workspace recovers from a transient identity startup failure without reload", async ({ page }) => {
   await mock(page, "admin", 1);
   await page.goto("/dashboard");
-  await expect(page.getByText("Current user")).toBeVisible();
+  await expect(page.getByText("Signed-in user")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Operations Library" })).toBeVisible();
   await expect(page.getByText("The service is temporarily unavailable.")).toHaveCount(0);
 });
 
-test("administrators create and delete collections with confirmation", async ({ page }, testInfo) => {
+test("administrators create and delete collections with confirmation", async ({ page }) => {
   await mock(page);
   await page.goto("/dashboard");
-  if (testInfo.project.name === "mobile") await page.getByRole("button", { name: "Open navigation" }).click();
   await page.getByRole("button", { name: "Delete collection" }).click();
   await expect(page.getByRole("dialog").getByRole("button", { name: "Delete collection" })).toBeDisabled();
   await page.getByRole("dialog").getByLabel("Type Operations Library to confirm").fill("Operations Library");
   await page.getByRole("dialog").getByRole("button", { name: "Delete collection" }).click();
   await expect(page.getByRole("heading", { name: "No collections available" })).toBeVisible();
-  if (testInfo.project.name === "mobile") await page.getByRole("complementary", { name: "Primary navigation" }).getByRole("button", { name: "Close navigation" }).click();
   await page.getByRole("button", { name: "Create collection" }).click();
   await page.getByRole("dialog").getByLabel("Name").fill("New collection");
   await page.getByRole("dialog").getByRole("button", { name: "Create" }).click();

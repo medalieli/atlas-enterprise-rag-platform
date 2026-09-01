@@ -7,6 +7,8 @@ from app.retrieval import (
     RRF_K,
     RetrievalCandidate,
     candidate_depth,
+    extract_query_identifiers,
+    inject_identifier_candidates,
     reciprocal_rank_fusion,
 )
 
@@ -61,3 +63,16 @@ def test_rrf_top_k_and_candidate_depth_are_bounded() -> None:
     assert len(reciprocal_rank_fusion(semantic, [], top_k=5)) == 5
     assert candidate_depth(1) == 4
     assert candidate_depth(50) == MAX_CANDIDATES_PER_BRANCH == 200
+
+
+def test_identifier_extraction_is_ordered_case_insensitive_and_bounded() -> None:
+    query = "Compare sec-028 with FINORION1028 and SEC-028, not loose FIN-28."
+    assert extract_query_identifiers(query) == ("SEC-028", "FINORION1028")
+
+
+def test_identifier_candidates_are_injected_without_duplicates() -> None:
+    exact = candidate(9)
+    fused = reciprocal_rank_fusion([candidate(1), exact], [], top_k=10)
+    results = inject_identifier_candidates(fused, [exact], 10)
+    assert results[0].candidate.chunk_id == exact.chunk_id
+    assert [item.candidate.chunk_id for item in results].count(exact.chunk_id) == 1

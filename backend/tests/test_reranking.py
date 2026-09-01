@@ -12,8 +12,10 @@ from app.reranking import (
     RerankInput,
     RerankScore,
     get_reranker_provider,
+    hybrid_fallback,
     passage_for_reranking,
     rerank_hybrid_candidates,
+    select_answer_candidates,
 )
 from app.retrieval import HybridCandidate, RetrievalCandidate
 
@@ -25,6 +27,7 @@ def hybrid(number: int, rank: int, content: str = "exact source") -> HybridCandi
             document_id=UUID(int=number + 100),
             document_name=f"safe-{number}.pdf",
             content=content,
+            source_unit_id=UUID(int=number + 200),
             page_number=number,
             section_path="Policy",
             start_offset=0,
@@ -156,6 +159,40 @@ def test_local_provider_uses_configured_batch_size() -> None:
     provider.model = Model()
     inputs = [RerankInput(UUID(int=1), "one"), RerankInput(UUID(int=2), "two")]
     assert [item.score for item in provider.score("query", inputs)] == [0.2, 0.4]
+
+
+def test_identifier_evidence_is_pinned_and_comparisons_are_diverse() -> None:
+    first = hybrid(1, 1, "SEC-028 header")
+    companion = hybrid(2, 2, "SEC-028 details")
+    companion = HybridCandidate(
+        candidate=RetrievalCandidate(
+            **{
+                **companion.candidate.__dict__,
+                "document_id": first.candidate.document_id,
+                "source_unit_id": first.candidate.source_unit_id,
+            }
+        ),
+        hybrid_score=companion.hybrid_score,
+        semantic_rank=companion.semantic_rank,
+        semantic_score=companion.semantic_score,
+        keyword_rank=companion.keyword_rank,
+        keyword_score=companion.keyword_score,
+    )
+    other = hybrid(3, 3, "other document")
+    ranked = hybrid_fallback([other, companion, first])
+    selected = select_answer_candidates(
+        "Compare SEC-028 with another control", ranked, 3
+    )
+    assert [item.hybrid.candidate.chunk_id for item in selected[:2]] == [
+        first.candidate.chunk_id,
+        companion.candidate.chunk_id,
+    ]
+    assert selected[2].hybrid.candidate.document_id == other.candidate.document_id
+
+
+def test_hybrid_fallback_preserves_fused_order() -> None:
+    candidates = [hybrid(2, 1), hybrid(1, 2)]
+    assert [item.hybrid for item in hybrid_fallback(candidates)] == candidates
 
 
 def test_provider_is_loaded_only_once(monkeypatch: pytest.MonkeyPatch) -> None:

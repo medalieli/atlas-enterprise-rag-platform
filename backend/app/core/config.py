@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     embedding_dimensions: int = 1536
     embedding_batch_size: int = Field(default=64, ge=1, le=2048)
     embedding_request_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
-    embedding_provider_max_retries: int = Field(default=0, ge=0, le=2)
+    embedding_provider_max_retries: int = Field(default=1, ge=0, le=2)
     embedding_max_input_tokens: int = Field(default=8191, ge=1, le=8192)
     embedding_max_batch_tokens: int = Field(default=300_000, ge=1, le=300_000)
     reranker_model_id: str = "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     answer_provider_max_retries: int = Field(default=1, ge=0, le=1)
     answer_max_concurrency: int = Field(default=2, ge=1, le=8)
     answer_max_claims: int = Field(default=12, ge=1, le=30)
-    answer_max_citations_per_claim: int = Field(default=5, ge=1, le=10)
+    answer_max_citations_per_claim: int = Field(default=8, ge=1, le=10)
     rewrite_model: str = "gpt-5.6-luna"
     rewrite_reasoning_effort: str = "low"
     rewrite_max_output_tokens: int = Field(default=600, ge=128, le=2_000)

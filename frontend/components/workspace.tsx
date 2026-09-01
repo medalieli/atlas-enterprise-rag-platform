@@ -1,6 +1,7 @@
 "use client";
 /* eslint-disable react-hooks/set-state-in-effect, react-hooks/exhaustive-deps */
 import Link from "next/link";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -55,6 +56,17 @@ function Status({ value }: { value: string }) {
       {value.replaceAll("_", " ")}
     </span>
   );
+}
+
+function NavIcon({ name }: { name: "overview" | "ask" | "knowledge" | "activity" | "insights" }) {
+  const paths = {
+    overview: <><path d="M4 5.5h6v5H4zM14 5.5h6v9h-6zM4 14.5h6v4H4zM14 18.5h6" /></>,
+    ask: <><path d="M5 6.5h14v10H9l-4 3z" /><path d="M9 10h6M9 13h4" /></>,
+    knowledge: <><path d="M5 5.5h6a3 3 0 0 1 3 3v10H8a3 3 0 0 0-3 1z" /><path d="M19 5.5h-2M14 8.5v10h3a3 3 0 0 1 2 1V9" /></>,
+    activity: <><path d="M4 19.5V6.5M4 19.5h16" /><path d="m7 15 3-4 3 2 5-7" /></>,
+    insights: <><path d="M5 19V9M10 19V5M15 19v-7M20 19V7" /></>,
+  };
+  return <svg className="nav-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
 }
 
 export function Workspace({
@@ -169,7 +181,7 @@ export function Workspace({
         >
           ☰
         </button>
-        <span className="brand">Atlas</span>
+        <span className="mobile-logo"><Image src="/atlas-logo.svg" alt="Atlas" width={360} height={88} priority /></span>
         <span className="avatar">{membership?.role[0].toUpperCase()}</span>
       </header>
       {mobile && (
@@ -184,11 +196,7 @@ export function Workspace({
         aria-label="Primary navigation"
       >
         <div className="brand-row">
-          <span className="brand-mark small">A</span>
-          <span>
-            <b>Atlas</b>
-            <small>Knowledge workspace</small>
-          </span>
+          <span className="brand-logo-shell sidebar-logo"><Image src="/atlas-logo.svg" alt="Atlas" width={360} height={88} priority /></span>
           <button
             className="close-nav"
             aria-label="Close navigation"
@@ -197,31 +205,25 @@ export function Workspace({
             ×
           </button>
         </div>
-        <label className="select-label" htmlFor="collection">
-          Collection
-        </label>
-        <select
-          id="collection"
-          value={collectionId}
-          onChange={(e) => setCollectionId(e.target.value)}
-        >
-          {collections.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </select>
+        <div className="workspace-switcher">
+          <span className="workspace-kicker">Workspace</span>
+          <strong>Atlas Knowledge</strong>
+          <label className="select-label" htmlFor="collection">Active collection</label>
+          <select id="collection" value={collectionId} onChange={(e) => setCollectionId(e.target.value)}>
+            {collections.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </div>
         {!collections.length && (
           <div className="sidebar-empty">No collections yet.</div>
         )}
         {membership && ["owner", "admin"].includes(membership.role) && (
           <div className="collection-actions">
             <button type="button" onClick={() => setCreateOpen(true)}>New collection</button>
-            {collectionId && <button className="danger" type="button" onClick={() => { setDeleteCollectionConfirmation(""); setDeleteCollectionOpen(true); }}>Delete collection</button>}
           </div>
         )}
         {identity?.demo_role_preview_enabled && membership?.real_role === "owner" && (
-          <div className="demo-role-control">
+          <details className="demo-role-control">
+            <summary>Development role preview</summary>
             <label htmlFor="demo-role">View workspace as</label>
             <select
               id="demo-role"
@@ -239,50 +241,33 @@ export function Workspace({
                 Return to Owner
               </button>
             )}
-          </div>
+          </details>
         )}
-        <nav>
-          <Link className={initialView === "dashboard" ? "active" : ""} href={"/dashboard" as "/chat"}>Overview</Link>
-          <Link className={initialView === "chat" ? "active" : ""} href="/chat">
-            ◫ <span>Chat</span>
-          </Link>
-          <Link
-            className={initialView === "documents" ? "active" : ""}
-            href="/documents"
-          >
-            ▤ <span>Documents</span>
-          </Link>
+        <nav aria-label="Workspace navigation">
+          <div className="nav-group">
+            <span className="nav-heading">Workspace</span>
+            <Link className={initialView === "dashboard" ? "active" : ""} href={"/dashboard" as "/chat"}><NavIcon name="overview" /><span>Overview</span></Link>
+            <Link className={initialView === "chat" ? "active" : ""} href="/chat"><NavIcon name="ask" /><span>Ask Atlas</span></Link>
+            <Link className={initialView === "documents" ? "active" : ""} href="/documents"><NavIcon name="knowledge" /><span>Knowledge</span></Link>
+          </div>
           {membership && ["owner", "admin"].includes(membership.role) && (
-            <>
-              {!identity?.demo_role_preview_enabled && <a className={initialView === "members" ? "active" : ""} href="/admin/members">Members</a>}
-              {!identity?.demo_role_preview_enabled && <a className={initialView === "invitations" ? "active" : ""} href="/admin/invitations">Invitations</a>}
-              <a
-                className={initialView === "audit" ? "active" : ""}
-                href="/admin/audit"
-              >
-                Audit activity
-              </a>
-              <a
-                className={initialView === "analytics" ? "active" : ""}
-                href="/admin/analytics"
-              >
-                Analytics
-              </a>
-            </>
+            <div className="nav-group">
+              <span className="nav-heading">Management</span>
+              <Link className={initialView === "audit" ? "active" : ""} href="/admin/audit"><NavIcon name="activity" /><span>Activity</span></Link>
+              <Link className={initialView === "analytics" ? "active" : ""} href="/admin/analytics"><NavIcon name="insights" /><span>Insights</span></Link>
+            </div>
           )}
         </nav>
         <div className="user-card">
           <span className="avatar">{membership?.role[0].toUpperCase()}</span>
           <span>
-            <b>Current user</b>
-            <small>{membership?.role ?? "member"}</small>
+            <b>Signed-in user</b>
+            <small>{membership?.role ?? "member"} · Atlas workspace</small>
           </span>
-          <button aria-label="Log out" onClick={() => void logout()}>
-            ↪
-          </button>
+          <button aria-label="Sign out" title="Sign out" onClick={() => void logout()}>Sign out</button>
         </div>
       </aside>
-      <main className={`workspace ${initialView === "chat" ? "chat-workspace" : ""}`} id="main-content">
+      <main className={`workspace ${initialView === "chat" ? "chat-workspace" : ""}`} id="main-content" tabIndex={0}>
         {identity?.effective_demo_role && identity.effective_demo_role !== "owner" && (
           <div className="demo-role-banner" role="status">
             <strong>Viewing as {identity.effective_demo_role[0].toUpperCase() + identity.effective_demo_role.slice(1)}</strong>
@@ -315,7 +300,7 @@ export function Workspace({
             onCreate={() => setCreateOpen(true)}
           />
         ) : initialView === "dashboard" ? (
-          <Dashboard collectionId={collectionId} collection={collections.find((item) => item.id === collectionId)!} admin={!!membership && ["owner", "admin"].includes(membership.role)} />
+          <Dashboard collectionId={collectionId} collection={collections.find((item) => item.id === collectionId)!} admin={!!membership && ["owner", "admin"].includes(membership.role)} onDelete={() => { setDeleteCollectionConfirmation(""); setDeleteCollectionOpen(true); }} />
         ) : initialView === "chat" ? (
           <Chat collectionId={collectionId} />
         ) : (
@@ -356,13 +341,31 @@ export function Workspace({
     </div>
   );
 }
-function Dashboard({ collectionId, collection, admin }: { collectionId: string; collection: Collection; admin: boolean }) {
+function Dashboard({ collectionId, collection, admin, onDelete }: { collectionId: string; collection: Collection; admin: boolean; onDelete(): void }) {
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
-  useEffect(() => { void Promise.all([api<DocumentItem[]>(`/collections/${collectionId}/documents`), api<{ conversations: Conversation[] }>(`/collections/${collectionId}/conversations`)]).then(([docs, chats]) => { setDocuments(docs); setConversations(chats.conversations); }); }, [collectionId]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => { setLoading(true); void Promise.all([api<DocumentItem[]>(`/collections/${collectionId}/documents`), api<{ conversations: Conversation[] }>(`/collections/${collectionId}/conversations`)]).then(([docs, chats]) => { setDocuments(docs); setConversations(chats.conversations); }).finally(() => setLoading(false)); }, [collectionId]);
   const ready = documents.filter((item) => item.status === "available").length;
   const failed = documents.filter((item) => item.status === "failed").length;
-  return <><header className="page-head"><div><p className="eyebrow">WORKSPACE OVERVIEW</p><h1>{collection.name}</h1><p>{collection.description || "Your approved knowledge at a glance."}</p></div></header><div className="metric-grid"><div className="panel metric"><span>Ready documents</span><strong>{ready}</strong></div><div className="panel metric"><span>Recent conversations</span><strong>{conversations.length}</strong></div><div className="panel metric"><span>Ingestion failures</span><strong>{failed}</strong></div><div className="panel metric"><span>Collection access</span><strong className="role-metric">{collection.access_role}</strong></div></div><section className="panel dashboard-panel"><h2>Continue working</h2><p>Ask evidence-grounded questions or keep this collection’s source material current.</p><div className="dashboard-actions"><Link className="button primary" href="/chat">Open chat</Link><Link className="button" href="/documents">Manage documents</Link>{admin && <Link className="button" href="/admin/analytics">Organization analytics</Link>}</div></section></>;
+  const processing = documents.filter((item) => ["pending", "processing", "queued", "retrying"].includes(item.status)).length;
+  const recent = [...documents].sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, 5);
+  return <>
+    <header className="page-head"><div><p className="eyebrow">WORKSPACE OVERVIEW</p><h1>{collection.name}</h1><p>{collection.description || "Operational status for this approved knowledge collection."}</p></div><span className="period-label">Current status</span></header>
+    <div className="operations-strip" aria-busy={loading}>
+      <div className="operation-metric"><span>Ready documents</span><strong>{ready}</strong><small>Available for grounded answers</small></div>
+      <div className="operation-metric"><span>Processing</span><strong>{processing}</strong><small>Uploads and indexing jobs</small></div>
+      <div className="operation-metric"><span>Conversations</span><strong>{conversations.length}</strong><small>In this collection</small></div>
+      <div className="operation-metric"><span>Ingestion failures</span><strong className={failed ? "metric-warning" : ""}>{failed}</strong><small>Requires review</small></div>
+    </div>
+    <div className="overview-grid">
+      <section className="panel dashboard-panel"><div className="section-heading"><div><p className="eyebrow">KNOWLEDGE OPERATIONS</p><h2>Recent documents</h2></div><Link className="text-link" href="/documents">View all documents</Link></div>
+        {recent.length ? <div className="recent-list">{recent.map((document) => <div key={document.id}><span className="document-glyph" aria-hidden="true">DOC</span><span><strong title={document.filename ?? undefined}>{document.filename || "Processing upload"}</strong><small>Updated {new Date(document.updated_at).toLocaleDateString()}</small></span><Status value={document.status} /></div>)}</div> : <div className="compact-empty"><strong>No documents indexed</strong><span>Upload an approved PDF or DOCX to begin.</span></div>}
+      </section>
+      <aside className="panel dashboard-panel"><p className="eyebrow">QUICK ACTIONS</p><h2>Continue working</h2><p>Ask evidence-grounded questions or maintain this collection’s source material.</p><div className="dashboard-actions"><Link className="button primary" href="/chat">Open chat</Link><Link className="button" href="/documents">Manage documents</Link>{admin && <Link className="button" href="/admin/analytics">View analytics</Link>}</div></aside>
+    </div>
+    {admin && <section className="panel settings-panel" id="collection-settings"><div><p className="eyebrow">WORKSPACE SETTINGS</p><h2>Collection administration</h2><p>Destructive controls are separated from daily navigation and require confirmation.</p></div><button className="button danger-outline" type="button" onClick={onDelete}>Delete collection</button></section>}
+  </>;
 }
 function EmptyCollections({
   admin,
@@ -498,8 +501,8 @@ function Documents({
       <header className="page-head">
         <div>
           <p className="eyebrow">KNOWLEDGE BASE</p>
-          <h1>Documents</h1>
-          <p>Manage indexed sources and monitor their lifecycle.</p>
+          <h1>Knowledge</h1>
+          <p>Control indexed sources and monitor their operational lifecycle.</p>
         </div>
         {role !== "viewer" && (
           <button className="button primary" onClick={() => setUpload(true)}>
@@ -591,6 +594,12 @@ function Documents({
           role={role}
           onClose={() => setSelected(undefined)}
           onChange={() => void reload()}
+          onDeleted={(documentId) => {
+            setDocs((current) =>
+              current.filter((document) => document.id !== documentId),
+            );
+            setSelected(undefined);
+          }}
         />
       )}
     </>
@@ -721,11 +730,13 @@ function DocumentDetails({
   role,
   onClose,
   onChange,
+  onDeleted,
 }: {
   document: DocumentItem;
   role: string;
   onClose(): void;
   onChange(): void;
+  onDeleted(documentId: string): void;
 }) {
   const [versions, setVersions] = useState<Version[]>([]);
   const [replace, setReplace] = useState(false);
@@ -752,7 +763,8 @@ function DocumentDetails({
             kind === "reindex" ? { "idempotency-key": key() } : undefined,
         },
       );
-      onChange();
+      if (kind === "delete") onDeleted(document.id);
+      else onChange();
       onClose();
     } catch (e) {
       setError(errorText(e));
@@ -1037,7 +1049,7 @@ function Chat({ collectionId }: { collectionId: string }) {
         <header className="page-head compact">
           <div>
             <p className="eyebrow">GROUNDED ASSISTANT</p>
-            <h1>Ask your knowledge base</h1>
+            <h1>Ask Atlas</h1>
           </div>
           <button className="button" onClick={() => void create()}>
             ＋ New chat
@@ -1257,12 +1269,20 @@ function CitationDrawer({
   onClose(): void;
 }) {
   const ref = useRef<HTMLElement>(null);
-  useEffect(() => ref.current?.focus(), []);
+  useEffect(() => {
+    ref.current?.focus();
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [onClose]);
   const source =
     citation.document_id && citation.document_version_id
       ? `/api/backend/collections/${collectionId}/documents/${citation.document_id}/versions/${citation.document_version_id}/source${citation.page_number ? `#page=${citation.page_number}` : ""}`
       : null;
-  return (
+  return (<>
+    <button className="drawer-backdrop" aria-label="Close citation details" onClick={onClose} />
     <aside
       className="drawer"
       aria-label={`Citation ${citation.citation_number}`}
@@ -1336,5 +1356,5 @@ function CitationDrawer({
         </>
       )}
     </aside>
-  );
+  </>);
 }

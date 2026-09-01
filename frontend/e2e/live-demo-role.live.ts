@@ -2,16 +2,25 @@ import { expect, test } from "@playwright/test";
 
 test("real OIDC owner previews backend-enforced roles", async ({ page, baseURL }) => {
   await page.goto(`${baseURL}/api/auth/login?returnTo=%2Fdashboard`);
+  async function openRolePreview() {
+    const details = page.locator(".demo-role-control");
+    if (!(await details.evaluate((element: HTMLDetailsElement) => element.open))) {
+      await page.getByText("Development role preview").click();
+    }
+  }
+  await openRolePreview();
   await expect(page.getByLabel("View workspace as")).toBeVisible();
 
   async function select(role: "owner" | "admin" | "editor" | "viewer") {
+    await openRolePreview();
     await page.getByLabel("View workspace as").selectOption(role);
     await page.waitForLoadState("domcontentloaded");
+    await openRolePreview();
     await expect(page.getByLabel("View workspace as")).toHaveValue(role);
   }
 
   await select("admin");
-  await expect(page.getByRole("link", { name: "Analytics", exact: true })).toHaveCount(1);
+  await expect(page.getByRole("link", { name: "Insights", exact: true })).toHaveCount(1);
   await select("editor");
   const editorCreateStatus = await page.evaluate(async () => {
     const csrf = await fetch("/api/auth/csrf").then((response) => response.json()) as { token: string };
@@ -31,5 +40,6 @@ test("real OIDC owner previews backend-enforced roles", async ({ page, baseURL }
   expect(viewerUploadStatus).toBe(403);
   await page.getByRole("button", { name: "Return to Owner" }).first().click();
   await page.waitForLoadState("domcontentloaded");
+  await openRolePreview();
   await expect(page.getByLabel("View workspace as")).toHaveValue("owner");
 });

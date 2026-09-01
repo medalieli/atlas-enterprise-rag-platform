@@ -1,0 +1,2 @@
+# False positive: immutable local Docker image tag, not a credential.
+ccae405498fef03a90b55a5e64460e8dd6243f89:operations/local-production-smoke.ps1:generic-api-key:5

@@ -81,8 +81,18 @@ packaged as safetensors during Docker build. Runtime uses local files only,
 loads and warms one model instance. CPU inference runs outside FastAPI's event loop,
 with defaults of 8 items per model batch, 512 tokens per pair, 30 seconds timeout and
 two bounded inference threads. Missing/corrupt startup assets fail startup; timeout,
-provider failure, wrong score count, unknown IDs and non-finite scores return an
-explicit safe HTTP 503 instead of silently returning the pre-reranked order.
+provider failure, wrong score count, unknown IDs and non-finite scores are observable.
+Search and answer requests then retain the already authorized deterministic fused
+order, so the optional local reranker cannot turn otherwise usable evidence into an
+outage.
+
+Queries containing bounded enterprise control IDs (for example `SEC-028`) or exact
+retrieval markers (for example `SECORION1042`) receive an additional scoped lookup.
+It uses the same tenant, collection, active-version, lifecycle and metadata predicates
+as normal retrieval. Every chunk from the matched source unit is inserted into the
+bounded reranker pool, and the complete evidence group is preserved in answer context
+even if repetitive passages receive a lower cross-encoder score. Explicit comparison
+queries also preserve document diversity before remaining slots follow reranked order.
 
 Safe structured logs contain only modes, counts, batch counts and component timing.
 They exclude query text, document content, metadata values, vectors, secrets and

@@ -87,7 +87,12 @@ export type Turn = {
   clarification_question: string | null;
   answer: Answer | null;
   assistant_message_id: string;
-  deterministic_reason: "greeting" | "help" | "empty_collection" | null;
+  deterministic_reason:
+    | "greeting"
+    | "help"
+    | "empty_collection"
+    | "workspace_action"
+    | null;
   deterministic_message: string | null;
 };
 

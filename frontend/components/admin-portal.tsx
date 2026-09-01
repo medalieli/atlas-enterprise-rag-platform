@@ -53,6 +53,14 @@ type Analytics = {
   p95_response_ms: number | null;
 };
 
+function AdminStatus({ value }: { value: string }) {
+  return <span className={`badge ${value.replaceAll("_", "-")}`}><span className="dot" aria-hidden="true" />{value.replaceAll("_", " ")}</span>;
+}
+
+function actionLabel(value: string) {
+  return value.replaceAll(".", " ").replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
 export function AdminPortal({
   view,
   tenantId,
@@ -153,12 +161,11 @@ export function AdminPortal({
   if (view === "members")
     return (
       <AdminPage
-        title="Organization members"
+        title="People"
         description="Roles and suspensions apply on the next request."
         error={error}
         notice={notice}
       >
-        <div className="filter-bar"><label>Invitation status<select value={invitationFilter} onChange={(event) => setInvitationFilter(event.target.value)}><option value="active">Active</option><option value="accepted">Accepted</option><option value="expired">Expired</option><option value="revoked">Revoked</option><option value="removed">Removed</option></select></label></div>
         <div className="panel table-panel">
           <table>
             <thead>
@@ -172,7 +179,7 @@ export function AdminPortal({
             <tbody>
               {members.map((m) => (
                 <tr key={m.id}>
-                  <td>{m.display_name || m.email || "OIDC principal"}</td>
+                  <td><strong>{m.display_name || "Authenticated member"}</strong><small>{m.email || "Identity managed by OIDC"}</small></td>
                   <td>
                     <select
                       aria-label={`Role for ${m.email || m.id}`}
@@ -188,7 +195,7 @@ export function AdminPortal({
                       <option>member</option>
                     </select>
                   </td>
-                  <td>{m.status}</td>
+                  <td><AdminStatus value={m.status} /></td>
                   <td>
                     <button
                       onClick={() =>
@@ -282,6 +289,7 @@ export function AdminPortal({
         error={error}
         notice={notice}
       >
+        <div className="filter-bar"><label>Invitation status<select value={invitationFilter} onChange={(event) => setInvitationFilter(event.target.value)}><option value="active">Active</option><option value="accepted">Accepted</option><option value="expired">Expired</option><option value="revoked">Revoked</option><option value="removed">Removed</option></select></label></div>
         <form
           className="panel admin-form"
           onSubmit={async (e) => {
@@ -409,7 +417,7 @@ export function AdminPortal({
   if (view === "audit")
     return (
       <AdminPage
-        title="Audit activity"
+        title="Activity"
         description="Tenant-scoped, append-only business events exclude private content."
         error={error}
         notice={notice}
@@ -419,9 +427,10 @@ export function AdminPortal({
           <table>
             <thead>
               <tr>
-                <th>Time</th>
+                <th>Timestamp</th>
+                <th>User</th>
                 <th>Action</th>
-                <th>Target</th>
+                <th>Resource</th>
                 <th>Outcome</th>
               </tr>
             </thead>
@@ -429,9 +438,10 @@ export function AdminPortal({
               {events.map((e) => (
                 <tr key={e.id}>
                   <td>{new Date(e.created_at).toLocaleString()}</td>
-                  <td>{e.action}</td>
-                  <td>{e.target_type}</td>
-                  <td>{e.outcome}</td>
+                  <td>{members.find((member) => member.id === e.actor_id)?.display_name || members.find((member) => member.id === e.actor_id)?.email || (e.actor_id ? "Authenticated user" : "System")}</td>
+                  <td><strong>{actionLabel(e.action)}</strong><small>{e.actor_role ? `Effective role: ${e.actor_role}` : ""}</small></td>
+                  <td>{actionLabel(e.target_type)}</td>
+                  <td><AdminStatus value={e.outcome} /></td>
                 </tr>
               ))}
             </tbody>
@@ -443,7 +453,6 @@ export function AdminPortal({
   const cards = analytics
     ? [
         ["Active users", analytics.active_users],
-        ["Pending invitations", analytics.pending_invitations],
         ["Collections", analytics.collections],
         ["Active documents", analytics.active_documents],
         ["Indexed chunks", analytics.chunks],
@@ -454,7 +463,7 @@ export function AdminPortal({
     : [];
   return (
     <AdminPage
-      title="Product analytics"
+      title="Insights"
       description="Bounded, privacy-safe organization aggregates for the last 30 days."
       error={error}
       notice={notice}
@@ -474,6 +483,11 @@ export function AdminPortal({
             <div><span>Median</span><strong>{analytics.median_response_ms === null ? "—" : `${(analytics.median_response_ms / 1000).toFixed(1)}s`}</strong></div>
             <div><span>95th percentile</span><strong>{analytics.p95_response_ms === null ? "—" : `${(analytics.p95_response_ms / 1000).toFixed(1)}s`}</strong></div>
           </div>
+          <p className="response-feedback-rate">
+            Positive feedback rate: {analytics.positive_feedback_rate === null
+              ? "Unavailable"
+              : `${(analytics.positive_feedback_rate * 100).toFixed(0)}%`}
+          </p>
         </div>
       )}
     </AdminPage>

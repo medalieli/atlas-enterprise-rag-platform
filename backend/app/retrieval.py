@@ -1,8 +1,9 @@
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import func, select, text
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
@@ -22,6 +23,10 @@ TEXT_SEARCH_REGCONFIG_SQL = text("'simple'::regconfig")
 RRF_K = 60
 CANDIDATE_MULTIPLIER = 4
 MAX_CANDIDATES_PER_BRANCH = 200
+MAX_IDENTIFIER_CANDIDATES = 64
+IDENTIFIER_PATTERN = re.compile(
+    r"\b(?:[A-Z]{2,6}-\d{3}|[A-Z]{2,12}ORION\d{4})\b", re.IGNORECASE
+)
 
 
 @dataclass(frozen=True)
@@ -60,6 +65,14 @@ class HybridCandidate:
 
 def candidate_depth(top_k: int) -> int:
     return min(MAX_CANDIDATES_PER_BRANCH, top_k * CANDIDATE_MULTIPLIER)
+
+
+def extract_query_identifiers(query: str) -> tuple[str, ...]:
+    """Return bounded, ordered control/marker identifiers from untrusted input."""
+    matches = dict.fromkeys(
+        match.upper() for match in IDENTIFIER_PATTERN.findall(query)
+    )
+    return tuple(matches)[:8]
 
 
 def _candidate(
@@ -248,6 +261,120 @@ async def keyword_candidates(
             score,
         ) in rows
     ]
+
+
+async def identifier_candidates(
+    session: AsyncSession,
+    tenant_id: UUID,
+    collection_id: UUID,
+    query_text: str,
+    filters: MetadataFilter | None = None,
+) -> list[RetrievalCandidate]:
+    """Fetch complete active source units for exact identifiers, within scope."""
+    identifiers = extract_query_identifiers(query_text)
+    if not identifiers:
+        return []
+    identifier_match = or_(
+        *(DocumentChunk.content.ilike(f"%{identifier}%") for identifier in identifiers)
+    )
+    matched_units = (
+        select(DocumentChunk.source_unit_id)
+        .join(
+            Document,
+            (Document.id == DocumentChunk.document_id)
+            & (Document.tenant_id == DocumentChunk.tenant_id),
+        )
+        .join(DocumentVersion, DocumentVersion.id == Document.active_version_id)
+        .join(
+            DocumentIndexGeneration,
+            DocumentIndexGeneration.id == DocumentVersion.active_generation_id,
+        )
+        .where(
+            DocumentChunk.tenant_id == tenant_id,
+            Document.collection_id == collection_id,
+            Document.status == DocumentStatus.AVAILABLE,
+            DocumentVersion.status == DocumentVersionStatus.ACTIVE,
+            DocumentIndexGeneration.status == IndexGenerationStatus.ACTIVE,
+            DocumentChunk.document_version_id == DocumentVersion.id,
+            DocumentChunk.generation_id == DocumentIndexGeneration.id,
+            *document_filter_predicates(filters, DocumentVersion),
+            identifier_match,
+        )
+        .distinct()
+        .limit(MAX_IDENTIFIER_CANDIDATES)
+    )
+    rows = (
+        await session.execute(
+            select(
+                DocumentChunk,
+                DocumentVersion.filename,
+                DocumentVersion.content_type,
+                DocumentVersion.created_at,
+                DocumentVersion.document_metadata,
+            )
+            .join(
+                Document,
+                (Document.id == DocumentChunk.document_id)
+                & (Document.tenant_id == DocumentChunk.tenant_id),
+            )
+            .join(DocumentVersion, DocumentVersion.id == Document.active_version_id)
+            .join(
+                DocumentIndexGeneration,
+                DocumentIndexGeneration.id == DocumentVersion.active_generation_id,
+            )
+            .where(
+                DocumentChunk.tenant_id == tenant_id,
+                Document.collection_id == collection_id,
+                Document.status == DocumentStatus.AVAILABLE,
+                DocumentVersion.status == DocumentVersionStatus.ACTIVE,
+                DocumentIndexGeneration.status == IndexGenerationStatus.ACTIVE,
+                DocumentChunk.document_version_id == DocumentVersion.id,
+                DocumentChunk.generation_id == DocumentIndexGeneration.id,
+                *document_filter_predicates(filters, DocumentVersion),
+                DocumentChunk.source_unit_id.in_(matched_units.scalar_subquery()),
+            )
+            .order_by(
+                DocumentVersion.filename,
+                DocumentChunk.page_number,
+                DocumentChunk.start_offset,
+                DocumentChunk.id,
+            )
+            .limit(MAX_IDENTIFIER_CANDIDATES)
+        )
+    ).all()
+    candidates = [
+        _candidate(chunk, filename, content_type, created_at, metadata, 1.0)
+        for chunk, filename, content_type, created_at, metadata in rows
+    ]
+    ordered: list[RetrievalCandidate] = []
+    for identifier in identifiers:
+        units = {
+            candidate.source_unit_id
+            for candidate in candidates
+            if identifier.casefold() in candidate.content.casefold()
+        }
+        ordered.extend(
+            candidate
+            for candidate in candidates
+            if candidate.source_unit_id in units
+            and candidate.chunk_id not in {item.chunk_id for item in ordered}
+        )
+    return ordered
+
+
+def inject_identifier_candidates(
+    fused: list[HybridCandidate],
+    exact: list[RetrievalCandidate],
+    limit: int,
+) -> list[HybridCandidate]:
+    """Keep exact scoped evidence in the reranker pool without duplicating chunks."""
+    injected = [
+        HybridCandidate(candidate, 1.0, None, None, 0, 1.0)
+        for candidate in exact
+    ]
+    seen = {item.candidate.chunk_id for item in injected}
+    injected.extend(item for item in fused if item.candidate.chunk_id not in seen)
+    return injected[:limit]
 
 
 def reciprocal_rank_fusion(

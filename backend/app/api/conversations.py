@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 from datetime import UTC, datetime
 from time import perf_counter
 from typing import Annotated
@@ -52,10 +53,12 @@ from app.rewriting import (
     RewriteResult,
     RewriteStatus,
     bounded_history,
+    deterministic_identifier_follow_up,
     get_follow_up_rewriter,
 )
 
 router = APIRouter(tags=["conversations"])
+logger = logging.getLogger("uvicorn.error")
 
 
 class CreateConversationResponse(BaseModel):
@@ -571,13 +574,28 @@ async def create_message(
             )
             rewrite_status = "bypassed"
         else:
-            if rewriter is None:
-                raise RewriteError("Rewrite provider unavailable")
-            with stage(
-                "conversation.followup.rewrite",
-                {"rag.operation": "rewrite", "rag.history_messages": len(history)},
-            ):
-                rewrite = await rewriter.rewrite(request.query, history)
+            deterministic_rewrite = deterministic_identifier_follow_up(
+                request.query, history
+            )
+            if deterministic_rewrite is not None:
+                rewrite = RewriteResult(
+                    output=deterministic_rewrite,
+                    configured_model="deterministic",
+                    actual_model="deterministic",
+                    input_tokens=0,
+                    output_tokens=0,
+                )
+            else:
+                if rewriter is None:
+                    raise RewriteError("Rewrite provider unavailable")
+                with stage(
+                    "conversation.followup.rewrite",
+                    {
+                        "rag.operation": "rewrite",
+                        "rag.history_messages": len(history),
+                    },
+                ):
+                    rewrite = await rewriter.rewrite(request.query, history)
             rewrite_status = rewrite.output.status.value
         rewrite_latency_ms = (perf_counter() - rewrite_started) * 1_000
         turn.rewrite_status = rewrite_status
@@ -661,6 +679,10 @@ async def create_message(
         return result
     except Exception as exc:
         await session.rollback()
+        logger.exception(
+            "Conversation turn failed category=%s",
+            getattr(exc, "category", type(exc).__name__),
+        )
         failed = await session.get(ConversationTurn, turn.id)
         if failed is not None:
             failed.status = ConversationTurnStatus.FAILED

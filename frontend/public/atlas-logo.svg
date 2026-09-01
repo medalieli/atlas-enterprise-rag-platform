@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 88" role="img" aria-labelledby="title">
+  <title id="title">Atlas</title>
+  <g transform="translate(4 8)">
+    <path fill="#70D2C5" d="M36 5 68 65 42 52 36 38 30 52 4 65Z"/>
+    <path fill="#F4F7F6" d="m36 5 9 31-9 13-9-13Z"/>
+    <circle cx="36" cy="65" r="4" fill="#70D2C5"/>
+  </g>
+  <text x="92" y="62" fill="#F4F7F6" font-family="Inter, IBM Plex Sans, Segoe UI, sans-serif" font-size="52" font-weight="600" letter-spacing="8">ATLAS</text>
+</svg>

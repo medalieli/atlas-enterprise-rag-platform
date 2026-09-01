@@ -2,6 +2,7 @@
 /* eslint-disable @next/next/no-location-assign-relative-destination -- hard navigation ensures HttpOnly continuation cookies reach the server render */
 
 import { useEffect, useRef, useState } from "react";
+import Image from "next/image";
 import { logout } from "@/lib/api";
 
 type State = "preparing" | "ready" | "working" | "accepted" | "wrong-identity" | "invalid" | "session-expired";
@@ -45,7 +46,7 @@ export default function InvitationAcceptance({ authenticated, continuationReady 
   }
 
   return <main className="auth-page" id="main-content"><section className="auth-card" aria-labelledby="invitation-title">
-    <span className="brand-mark">A</span><h1 id="invitation-title">Join this Atlas workspace</h1>
+    <span className="invitation-logo"><Image src="/atlas-logo.svg" alt="Atlas" width={360} height={88} priority /></span><h1 id="invitation-title">Join this Atlas workspace</h1>
     <p>Your verified identity-provider email must match the invitation. Atlas never asks for or stores your password.</p>
     {state === "preparing" && <div role="status">Preparing your secure invitation…</div>}
     {state === "ready" && !authenticated && <a className="button primary" href="/api/auth/login?returnTo=%2Finvitations%2Faccept">Sign in to accept invitation</a>}

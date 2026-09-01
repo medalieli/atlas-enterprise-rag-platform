@@ -1,5 +1,6 @@
 import logging
 import math
+from collections import OrderedDict
 from datetime import datetime
 from time import perf_counter
 from typing import Annotated
@@ -30,18 +31,27 @@ from app.metadata import (
     PublicDocumentMetadata,
     public_document_metadata,
 )
-from app.observability import RETRIEVAL_DURATION, RETRIEVAL_RESULTS, stage
+from app.observability import (
+    QUERY_EMBEDDING_CACHE,
+    RETRIEVAL_DURATION,
+    RETRIEVAL_QUALITY,
+    RETRIEVAL_RESULTS,
+    stage,
+)
 from app.reranking import (
     RerankedCandidate,
     RerankerError,
     RerankerProvider,
     get_reranker_provider,
+    hybrid_fallback,
     rerank_hybrid_candidates,
 )
 from app.retrieval import (
     HybridCandidate,
     RetrievalCandidate,
     candidate_depth,
+    identifier_candidates,
+    inject_identifier_candidates,
     keyword_candidates,
     reciprocal_rank_fusion,
     semantic_candidates,
@@ -176,11 +186,28 @@ async def authorize_collection(
 
 async def _embed_query(provider: EmbeddingProvider, query: str) -> list[float]:
     settings = get_settings()
+    cache_key = (
+        provider,
+        settings.embedding_model,
+        query.strip(),
+        settings.embedding_dimensions,
+    )
+    cached = _QUERY_EMBEDDING_CACHE.get(cache_key)
+    if cached is not None:
+        _QUERY_EMBEDDING_CACHE.move_to_end(cache_key)
+        QUERY_EMBEDDING_CACHE.labels("hit").inc()
+        return list(cached)
+    QUERY_EMBEDDING_CACHE.labels("miss").inc()
     try:
         with stage("provider.embedding.request", {"rag.operation": "embedding"}):
-            return validate_vector(
+            vector = validate_vector(
                 await provider.embed_query(query), settings.embedding_dimensions
             )
+            _QUERY_EMBEDDING_CACHE[cache_key] = tuple(vector)
+            _QUERY_EMBEDDING_CACHE.move_to_end(cache_key)
+            while len(_QUERY_EMBEDDING_CACHE) > 256:
+                _QUERY_EMBEDDING_CACHE.popitem(last=False)
+            return vector
     except EmbeddingConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except TransientEmbeddingError as exc:
@@ -191,6 +218,11 @@ async def _embed_query(provider: EmbeddingProvider, query: str) -> list[float]:
         raise HTTPException(
             status_code=422, detail="Query could not be embedded"
         ) from exc
+
+
+_QUERY_EMBEDDING_CACHE: OrderedDict[
+    tuple[object, str, str, int], tuple[float, ...]
+] = OrderedDict()
 
 
 def _search_result(rank: int, item: RetrievalCandidate) -> SearchResult:
@@ -446,7 +478,15 @@ async def reranked_search(
         depth,
         request.filters,
     )
-    fused = reciprocal_rank_fusion(semantic, keyword, pool_size)
+    exact = await identifier_candidates(
+        session, tenant_id, collection_id, request.query, request.filters
+    )
+    RETRIEVAL_QUALITY.labels(
+        "identifier", "matched" if exact else "absent"
+    ).inc()
+    fused = inject_identifier_candidates(
+        reciprocal_rank_fusion(semantic, keyword, pool_size), exact, pool_size
+    )
     retrieval_ms = (perf_counter() - started) * 1000
     reranker_started = perf_counter()
     try:
@@ -457,8 +497,10 @@ async def reranked_search(
             reranker,
             settings.reranker_timeout_seconds,
         )
-    except RerankerError as exc:
-        raise HTTPException(status_code=503, detail="Reranker unavailable") from exc
+    except RerankerError:
+        RETRIEVAL_QUALITY.labels("reranker", "fallback").inc()
+        logger.warning("Reranker unavailable; using fused retrieval order")
+        results = hybrid_fallback(fused)[: request.top_k]
     reranker_ms = (perf_counter() - reranker_started) * 1000
     RETRIEVAL_DURATION.labels("reranked").observe(reranker_ms / 1000)
     RETRIEVAL_RESULTS.labels("reranked").observe(len(results))

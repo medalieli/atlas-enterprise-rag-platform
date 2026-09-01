@@ -29,10 +29,23 @@ async function rolePreviewMock(page: Page) {
   });
 }
 
+async function openRolePreview(page: Page) {
+  const mobileNavigation = page.getByRole("button", { name: "Open navigation" });
+  if ((page.viewportSize()?.width ?? 1000) <= 900) {
+    await mobileNavigation.click();
+    await expect(page.locator(".sidebar")).toHaveClass(/open/);
+  }
+  const details = page.locator(".demo-role-control");
+  if (!(await details.evaluate((element: HTMLDetailsElement) => element.open))) {
+    await page.getByText("Development role preview").click();
+  }
+}
+
 test("owner previews every real role and returns to owner", async ({ page }, testInfo) => {
   await rolePreviewMock(page);
   await page.goto("/dashboard");
   for (const role of ["owner", "admin", "editor", "viewer"] as const) {
+    await openRolePreview(page);
     await page.getByLabel("View workspace as").selectOption(role);
     await page.waitForLoadState("domcontentloaded");
     if (role === "owner") await expect(page.getByText(/Viewing as/)).toHaveCount(0);
@@ -40,11 +53,12 @@ test("owner previews every real role and returns to owner", async ({ page }, tes
       await expect(page.getByText(`Viewing as ${role[0].toUpperCase()}${role.slice(1)}`)).toBeVisible();
       await expect(page.getByRole("button", { name: "Return to Owner" }).first()).toBeVisible();
     }
-    await expect(page.getByRole("link", { name: "Members" })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "People" })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "Settings" })).toHaveCount(0);
     await expect(page.getByRole("link", { name: "Invitations" })).toHaveCount(0);
     if (role === "owner" || role === "admin")
-      await expect(page.getByRole("link", { name: "Analytics", exact: true })).toHaveCount(1);
-    else await expect(page.getByRole("link", { name: "Analytics", exact: true })).toHaveCount(0);
+      await expect(page.getByRole("link", { name: "Insights", exact: true })).toHaveCount(1);
+    else await expect(page.getByRole("link", { name: "Insights", exact: true })).toHaveCount(0);
     await page.screenshot({ path: `qa/demo-role-${role}-${testInfo.project.name}.png`, fullPage: true });
   }
   await page.locator(".demo-role-banner").getByRole("button", { name: "Return to Owner" }).click();
@@ -107,10 +121,11 @@ test("long conversations scroll independently while composer stays visible", asy
 test("role notice floats without displacing chat", async ({ page }) => {
   await rolePreviewMock(page);
   await page.goto("/chat");
+  await openRolePreview(page);
   await page.getByLabel("View workspace as").selectOption("editor");
   await page.waitForLoadState("domcontentloaded");
   await expect(page.getByText("Viewing as Editor")).toBeVisible();
-  expect(await page.locator(".demo-role-banner").evaluate((element) => getComputedStyle(element).position)).toBe("absolute");
+  expect(await page.locator(".demo-role-banner").evaluate((element) => getComputedStyle(element).position)).toBe("fixed");
   expect(await page.locator(".chat-layout").evaluate((element) => element.clientHeight > 0)).toBe(true);
   await expect(page.locator(".composer")).toBeVisible();
 });

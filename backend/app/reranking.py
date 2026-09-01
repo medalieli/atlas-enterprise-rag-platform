@@ -1,5 +1,6 @@
 import asyncio
 import math
+import re
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -8,7 +9,7 @@ from typing import Protocol
 from uuid import UUID
 
 from app.core.config import Settings, get_settings
-from app.retrieval import HybridCandidate
+from app.retrieval import HybridCandidate, extract_query_identifiers
 
 
 class RerankerError(Exception):
@@ -163,6 +164,54 @@ async def rerank_hybrid_candidates(
         )
     )
     return ranked[:top_k]
+
+
+def hybrid_fallback(candidates: list[HybridCandidate]) -> list[RerankedCandidate]:
+    """Preserve deterministic fused ordering when the optional reranker fails."""
+    return [
+        RerankedCandidate(candidate, rank, 0.0)
+        for rank, candidate in enumerate(candidates, 1)
+    ]
+
+
+def select_answer_candidates(
+    query: str, ranked: list[RerankedCandidate], top_k: int
+) -> list[RerankedCandidate]:
+    """Pin complete exact evidence and diversify explicit comparisons."""
+    selected: list[RerankedCandidate] = []
+    identifiers = extract_query_identifiers(query)
+    for identifier in identifiers:
+        matching_units = {
+            item.hybrid.candidate.source_unit_id
+            for item in ranked
+            if identifier.casefold() in item.hybrid.candidate.content.casefold()
+        }
+        for item in sorted(
+            (
+                candidate
+                for candidate in ranked
+                if candidate.hybrid.candidate.source_unit_id in matching_units
+            ),
+            key=lambda candidate: (
+                candidate.hybrid.candidate.start_offset,
+                str(candidate.hybrid.candidate.chunk_id),
+            ),
+        ):
+            if item not in selected:
+                selected.append(item)
+    comparison = bool(
+        re.search(
+            r"\b(compare|comparison|versus|vs\.?|difference|between)\b", query, re.I
+        )
+    )
+    if comparison:
+        seen_documents = {item.hybrid.candidate.document_id for item in selected}
+        for item in ranked:
+            if item.hybrid.candidate.document_id not in seen_documents:
+                selected.append(item)
+                seen_documents.add(item.hybrid.candidate.document_id)
+    selected.extend(item for item in ranked if item not in selected)
+    return selected[:top_k]
 
 
 async def warm_reranker() -> None:

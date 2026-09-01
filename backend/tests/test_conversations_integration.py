@@ -128,6 +128,14 @@ async def test_owned_conversation_first_turn_and_idempotency() -> None:
                 headers={"Idempotency-Key": "second"},
                 json={"query": "Does that still apply?", "top_k": 3},
             )
+            workspace_action = await client.post(
+                path,
+                headers={"Idempotency-Key": "third"},
+                json={
+                    "query": "create a new temporary collection called test1",
+                    "top_k": 3,
+                },
+            )
             messages = await client.get(path)
             removed = await client.delete(
                 f"/collections/{collection_id}/conversations/{conversation_id}"
@@ -152,9 +160,17 @@ async def test_owned_conversation_first_turn_and_idempotency() -> None:
         assert clarification.status_code == 200
         assert clarification.json()["deterministic_reason"] == "empty_collection"
         assert clarification.json()["answer"] is None
+        assert workspace_action.status_code == 200
+        assert workspace_action.json()["deterministic_reason"] == "workspace_action"
+        assert workspace_action.json()["answer"] is None
+        assert "No collection was changed" in workspace_action.json()[
+            "deterministic_message"
+        ]
         assert clarifier.calls == 0
         assert embedding.calls == 0
         assert [item["role"] for item in messages.json()["messages"]] == [
+            "user",
+            "assistant",
             "user",
             "assistant",
             "user",

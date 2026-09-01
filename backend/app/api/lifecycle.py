@@ -572,7 +572,12 @@ async def list_documents(
             .outerjoin(
                 DocumentVersion, DocumentVersion.id == Document.active_version_id
             )
-            .where(Document.collection_id == collection_id)
+            .where(
+                Document.collection_id == collection_id,
+                Document.status.not_in(
+                    (DocumentStatus.DELETING, DocumentStatus.DELETED)
+                ),
+            )
             .order_by(Document.created_at.desc(), Document.id.desc())
         )
     ).all()

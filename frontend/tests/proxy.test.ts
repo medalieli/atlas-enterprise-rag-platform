@@ -20,3 +20,11 @@ describe("demo-only administration routes", () => {
     },
   );
 });
+
+describe("public brand assets", () => {
+  it("serves the Atlas logo without requiring an authenticated session", () => {
+    const response = proxy(new NextRequest("http://localhost/atlas-logo.svg"));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("location")).toBeNull();
+  });
+});

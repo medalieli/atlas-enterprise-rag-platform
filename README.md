@@ -57,7 +57,13 @@ analytics and deterministic onboarding UX without changing the RAG pipeline.
 
 ## Configure the environment
 
-Compose has safe local defaults, so no environment file is required. To customize ports or credentials, copy `.env.example` to `.env` and edit the copy. Never commit `.env` or production credentials.
+Compose has safe local defaults, including a disposable Dockerized OIDC issuer and
+an idempotently seeded Owner workspace. No environment file is required for the
+local showcase. To customize ports, credentials, or the OpenAI key, copy
+`.env.example` to `.env` and edit the copy. Never commit `.env` or production
+credentials. The local identity service is development-only and is not included
+when production is launched with explicit `-f compose.yaml -f compose.prod.yaml`
+files.
 
 If database credentials are changed, update `DATABASE_URL` to match. Inside Compose, its hostname must remain `postgres`.
 
@@ -69,6 +75,11 @@ From the repository root:
 docker compose up --build -d
 docker compose ps
 ```
+
+On a clean database, Compose automatically applies Alembic migrations and creates
+the local Owner workspace before the API starts. Open <http://localhost:3000>, choose
+**Sign up**, and the local issuer signs in the synthetic Owner without a password.
+Port `9444` must be available for this browser-only development issuer.
 
 Stop services safely while preserving the database volume:
 

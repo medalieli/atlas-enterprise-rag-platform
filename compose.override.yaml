@@ -1,0 +1,97 @@
+services:
+  local-oidc:
+    build:
+      context: ./backend
+      args:
+        DOWNLOAD_RERANKER: "false"
+    entrypoint: ["python"]
+    user: "0:0"
+    command:
+      - /operations/ephemeral_oidc.py
+      - --insecure-http
+      - --allow-container-bind
+      - --bind
+      - 0.0.0.0
+      - --port
+      - "9444"
+      - --issuer
+      - http://local-oidc:9444
+      - --generate-signing-key
+      - --signing-key
+      - /oidc-data/signing-key.pem
+      - --client-secret
+      - local-development-oidc-secret
+      - --subject
+      - local-owner
+      - --email
+      - owner@atlas.example.test
+      - --redirect-uri
+      - http://localhost:3000/api/auth/callback
+    volumes:
+      - ./operations:/operations:ro
+      - local_oidc_data:/oidc-data
+    ports:
+      - "9444:9444"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9444/.well-known/openid-configuration', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  migrate:
+    build:
+      context: ./backend
+      args:
+        DOWNLOAD_RERANKER: "false"
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://rag_assistant_dev:rag_assistant_dev@postgres:5432/rag_assistant_dev}
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  local-bootstrap:
+    build:
+      context: ./backend
+      args:
+        DOWNLOAD_RERANKER: "false"
+    command: ["python", "-m", "app.bootstrap_local_development"]
+    environment:
+      APP_ENV: development
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://rag_assistant_dev:rag_assistant_dev@postgres:5432/rag_assistant_dev}
+      LOCAL_OIDC_ISSUER: http://local-oidc:9444
+      LOCAL_OIDC_OWNER_SUBJECT: local-owner
+    restart: "no"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  api:
+    environment:
+      AUTH_ENABLED: "true"
+      AUTH_ISSUER: http://local-oidc:9444
+      AUTH_JWKS_URL: http://local-oidc:9444/jwks
+      AUTH_ALLOW_INSECURE_HTTP: "true"
+    depends_on:
+      local-oidc:
+        condition: service_healthy
+      local-bootstrap:
+        condition: service_completed_successfully
+
+  frontend:
+    environment:
+      OIDC_AUTHORIZATION_URL: http://localhost:9444/authorize
+      OIDC_TOKEN_URL: http://local-oidc:9444/token
+      OIDC_CLIENT_ID: m15-local-client
+      OIDC_CLIENT_SECRET: local-development-oidc-secret
+      LOCAL_SYNTHETIC_OWNER_ENABLED: "true"
+    depends_on:
+      local-oidc:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+
+volumes:
+  local_oidc_data:

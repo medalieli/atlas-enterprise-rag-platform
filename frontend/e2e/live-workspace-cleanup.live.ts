@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 test("real Docker workspace cleanup is idempotent and audited", async ({ page, baseURL }) => {
   await page.goto(`${baseURL}/api/auth/login?returnTo=%2Fdashboard`);
+  await page.getByText("Development role preview").click();
   await expect(page.getByLabel("View workspace as")).toBeVisible();
   const result = await page.evaluate(async () => {
     const csrf = await fetch("/api/auth/csrf").then((response) => response.json()) as { token: string };

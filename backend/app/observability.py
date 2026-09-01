@@ -142,6 +142,16 @@ RETRIEVAL_RESULTS = Histogram(
     ["mode"],
     buckets=(0, 1, 2, 4, 8, 16, 32, 64),
 )
+RETRIEVAL_QUALITY = Counter(
+    "rag_retrieval_quality_events_total",
+    "Bounded retrieval quality-stage outcomes.",
+    ["stage", "outcome"],
+)
+QUERY_EMBEDDING_CACHE = Counter(
+    "rag_query_embedding_cache_total",
+    "In-process query embedding cache outcomes.",
+    ["outcome"],
+)
 INGESTION_JOBS = Counter(
     "rag_ingestion_jobs_total", "Ingestion job outcomes.", ["operation", "outcome"]
 )

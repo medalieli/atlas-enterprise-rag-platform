@@ -56,15 +56,15 @@ test("owner invites a distinct verified identity in a fresh browser context", as
   await expect(inviteePage.getByRole("heading", { name: "Policies" })).toBeVisible();
   await inviteePage.goto(`${baseURL}/admin/members`);
   await expect(inviteePage).toHaveURL(/\/dashboard$/);
-  await expect(inviteePage.getByRole("heading", { name: "Organization members" })).toHaveCount(0);
+  await expect(inviteePage.getByRole("heading", { name: "People" })).toHaveCount(0);
   await expect(inviteePage.getByText(/session ended/i)).toHaveCount(0);
   await inviteePage.goBack();
   await expect(inviteePage).toHaveURL(/\/dashboard$/);
-  await expect(inviteePage.getByRole("heading", { name: "Organization members" })).toHaveCount(0);
+  await expect(inviteePage.getByRole("heading", { name: "People" })).toHaveCount(0);
   await expect(inviteePage.getByText(/session ended/i)).toHaveCount(0);
   await inviteePage.goForward();
   await expect(inviteePage).toHaveURL(/\/dashboard$/);
-  await expect(inviteePage.getByRole("heading", { name: "Organization members" })).toHaveCount(0);
+  await expect(inviteePage.getByRole("heading", { name: "People" })).toHaveCount(0);
   await expect(inviteePage.getByText(/session ended/i)).toHaveCount(0);
 
   await inviteePage.goto(invitationLink);
@@ -89,7 +89,7 @@ test("owner invites a distinct verified identity in a fresh browser context", as
   await expect(inviteePage).toHaveURL(/\/login/);
   await inviteePage.goBack();
   await expect(inviteePage).toHaveURL(/\/login\?returnTo=/);
-  await expect(inviteePage.getByRole("heading", { name: "Organization members" })).toHaveCount(0);
+  await expect(inviteePage.getByRole("heading", { name: "People" })).toHaveCount(0);
 
   await invitee.close();
   await wrong.close();
