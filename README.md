@@ -74,12 +74,11 @@ YOUTUBE PLACEHOLDER
 2. Replace REPLACE_WITH_VIDEO_ID in both links in this README.
 3. Replace docs/assets/demo-thumbnail.png with the final thumbnail.
 -->
-
-<p align="center">
+<h1 align="center">
   <a href="https://www.youtube.com/watch?v=phiGWeTivwc">
-    <strong style="font-size: 44px;">▶ Watch Video Demo</strong>
+    ▶ WATCH VIDEO DEMO
   </a>
-</p>
+</h1>
 The recommended demonstration covers authentication, multi-file ingestion, grounded English/French question answering, validated citations, insufficient-context behavior, authorization denials, analytics, and the architecture.
 
 ## Product tour
