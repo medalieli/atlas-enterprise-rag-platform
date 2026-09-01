@@ -29,7 +29,7 @@ Recommended: 1600 × 900, synthetic data only, no emails, tokens, local paths, o
 -->
 
 <p align="center">
-  <img src="docs/portfolio/pipeline.png" alt="Atlas enterprise knowledge workspace overview" width="400">
+  <img src="docs/portfolio/atlas8.png" alt="Atlas enterprise knowledge workspace overview" width="400">
 </p>
 
 ## Why Atlas
@@ -164,7 +164,7 @@ Use one synthetic organization and collection across the full tour.
   <tr>
     <td align="center">
       <img
-        src="docs/assets/screenshots/07-mobile-chat.png"
+        src="docs/portfolio/atlas7.png"
         alt="Atlas responsive mobile conversation interface"
         width="360"
       >
@@ -202,14 +202,14 @@ Use synthetic documents only and hide emails, tokens, private text, and local en
 
 <p align="center">
   <img
-    src="docs/portfolio/atlas-multilingual-chat.png"
-    alt="Atlas grounded conversations in English and French with validated citations"
+    src="docs/portfolio/atlas2.png"
+    alt="Atlas grounded conversations in English and French and Arabic with validated citations"
     width="100%"
   >
   <br>
   <strong>Grounded multilingual conversations</strong>
   <br>
-  <sub>English and French questions retain the same retrieval, authorization, grounding, and citation-validation guarantees.</sub>
+  <sub>English and French and Arabic questions retain the same retrieval, authorization, grounding, and citation-validation guarantees.</sub>
 </p>
 
 > **Scope:** English and French are the languages exercised by the current focused evaluation. The multilingual models may support additional languages, but Atlas does not claim equal quality for languages that have not been evaluated. It also does not silently translate source documents or apply language-specific stemming.
@@ -219,7 +219,7 @@ Use synthetic documents only and hide emails, tokens, private text, and local en
 Atlas separates document ingestion from question answering. Both paths meet in the authorized PostgreSQL retrieval layer, while citation validation resolves trusted source information independently from the model output.
 
 <p align="center">
-  <img src="docs/assets/atlas-architecture-v2.png" alt="Atlas ingestion, retrieval, answer generation, and citation-validation architecture" width="620">
+  <img src="docs/portfolio/pipeline.png" alt="Atlas ingestion, retrieval, answer generation, and citation-validation architecture" width="620">
 </p>
 
 ### Pipeline explained
