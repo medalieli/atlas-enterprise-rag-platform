@@ -13,7 +13,7 @@ Ask questions across controlled PDF and DOCX knowledge and receive grounded answ
 [![Deployment](https://img.shields.io/badge/deployment-Docker%20Compose-374151?style=flat-square)](#download-and-run-atlas-locally)
 
 <!-- Replace REPLACE_WITH_VIDEO_ID after uploading the final YouTube video. -->
-**[Watch the demonstration](https://www.youtube.com/watch?v=REPLACE_WITH_VIDEO_ID)** ·
+**[Watch the demonstration]([https://www.youtube.com/watch?v=phiGWeTivwc])** ·
 **[Architecture](#architecture)** ·
 **[Run locally](#download-and-run-atlas-locally)** ·
 **[Verification](#measured-verification)**
